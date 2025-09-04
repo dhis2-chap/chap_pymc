@@ -6,12 +6,15 @@
 #   python pymc_st_arf_model_nomutable.py --csv your_file.csv
 
 import argparse
+import uuid
+
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import StandardScaler
 import pydantic
 import pymc as pm
 import pytensor.tensor as pt
+import cyclopts
 
 def parse_args():
     ap = argparse.ArgumentParser()
@@ -68,17 +71,13 @@ def prepare_data(args, raw):
 
     # Target (T, L)
     y = to_tensor_panels(panel, time_idx, locs, args.date_col, args.loc_col, args.target_col)
-    if np.isnan(y).any():
-        y = safe_impute(y)
+    #if np.isnan(y).any():
+    #    y = safe_impute(y)
     y = np.clip(y, 0, None).astype(int)
 
     # Covariates (optional) -> standardize
     feat_names = [args.rain_col, args.temp_col]
     X_list = [to_tensor_panels(panel, time_idx, locs, args.date_col, args.loc_col, col) for col in [args.rain_col, args.temp_col]]
-    # X_list.append(to_tensor_panels(panel, time_idx, locs, args.date_col, args.loc_col, args.rain_col))
-    # feat_names.append(args.rain_col)
-    # X_list.append(to_tensor_panels(panel, time_idx, locs, args.date_col, args.loc_col, args.temp_col))
-    # feat_names.append(args.temp_col)
     X = np.stack(X_list, axis=2)  # (T, L, P)
     P = X.shape[2]
     scaler = StandardScaler().fit(X.reshape(T*L, P))
@@ -98,103 +97,10 @@ def prepare_data(args, raw):
 
 
 def train(data_dict, args):
-    """Train the PyMC model and return fitted model with inference data."""
-    y = data_dict['y']
-    X_std = data_dict['X_std']
-    T, L, P, H = data_dict['T'], data_dict['L'], data_dict['P'], data_dict['H']
-    
-    # Convert constants to graph tensors
-    y_const = y
-    Xpast_const = X_std if P else None
 
-    with pm.Model() as model:
-        # ----- Fixed effects -----
-        intercept = pm.Normal("intercept", 0.0, 5.0)
-        if P:
-            beta = pm.Normal("beta", 0.0, 1.0, shape=P)
-            linpast = intercept + pt.tensordot(pt.as_tensor_variable(Xpast_const), beta, axes=[2, 0])
-        else:
-            linpast = intercept + pt.zeros((T, L))
-
-        # ----- AR(1) process using PyMC's built-in AR distribution -----
-        rho = pm.Uniform("rho", lower=-0.99, upper=0.99)
-        sigma_u = pm.HalfNormal("sigma_u", 1.0)
-        
-        # AR(1) process for each location independently
-        # pm.AR expects shape (T, L) and creates an AR process along the time dimension
-        u_seq = pm.AR("u_ar", rho=rho, sigma=sigma_u, shape=(T, L))
-
-        # ----- Observation model: Negative Binomial -----
-        alpha = pm.HalfNormal("alpha", 1.0)
-        mu_past = pt.exp(linpast + u_seq)
-        y_like = pm.NegativeBinomial("y", mu=mu_past, alpha=alpha, observed=y_const)
-
-        idata = pm.sample(
-            draws=args.draws,
-            tune=args.tune,
-            chains=args.chains,
-            target_accept=0.9,
-            random_seed=args.seed,
-            progressbar=True,
-        )
 
     return model, idata
 
-def predict(model, idata, data_dict, args):
-    """Generate predictions using the trained model."""
-    import uuid
-    X_std = data_dict['X_std']
-    T, L, P, H = data_dict['T'], data_dict['L'], data_dict['P'], data_dict['H']
-    
-    # Prepare future covariates by holding last value
-    if P > 0:
-        X_future = np.tile(X_std[-1:, :, :], (H, 1, 1))  # hold last
-        Xfut_const = X_future
-    else:
-        Xfut_const = None
-
-    # Create a new model for prediction to avoid variable name conflicts
-    with pm.Model() as pred_model:
-        # Get parameter values from posterior
-        intercept_val = idata.posterior['intercept'].mean(dim=['chain', 'draw']).values
-        sigma_u_val = idata.posterior['sigma_u'].mean(dim=['chain', 'draw']).values
-        rho_val = idata.posterior['rho'].mean(dim=['chain', 'draw']).values
-        alpha_val = idata.posterior['alpha'].mean(dim=['chain', 'draw']).values
-        
-        # Fixed effects for future periods
-        if P:
-            beta_val = idata.posterior['beta'].mean(dim=['chain', 'draw']).values
-            linfut = intercept_val + pt.tensordot(pt.as_tensor_variable(Xfut_const), pt.as_tensor_variable(beta_val), axes=[2, 0])
-        else:
-            linfut = intercept_val + pt.zeros((H, L))
-        
-        # Get the last values from the trained AR process
-        # Extract last time step from the AR process
-        u_ar_last = idata.posterior['u_ar'].isel(u_ar_dim_0=-1).mean(dim=['chain', 'draw']).values  # (L,)
-        
-        # Create future AR process starting from last observed state
-        unique_id = str(uuid.uuid4())[:8]
-        
-        # For prediction, we'll use a simple AR(1) continuation
-        # Initialize with last observed values
-        u_fut = [pt.as_tensor_variable(u_ar_last)]
-        
-        # Generate H future steps
-        for h in range(H):
-            noise = pm.Normal(f"noise_{unique_id}_{h}", 0.0, sigma_u_val, shape=(L,))
-            next_u = rho_val * u_fut[-1] + noise
-            u_fut.append(next_u)
-        
-        # Stack future AR values (skip initial value)
-        u_fut_seq = pt.stack(u_fut[1:], axis=0)  # (H, L)
-
-        mu_future = pt.exp(linfut + u_fut_seq)
-        y_fut = pm.NegativeBinomial(f"y_fut_{unique_id}", mu=mu_future, alpha=alpha_val)
-
-        # Sample from the prediction model
-        ppc = pm.sample_prior_predictive(samples=len(idata.posterior.chain) * len(idata.posterior.draw))
-
-    return ppc
 
 def format_predictions(ppc, data_dict, args):
     """Format predictions into output DataFrame."""
@@ -240,8 +146,47 @@ def on_train(training_data: pd.DataFrame) -> tuple:
     # Prepare data directly
     # Prepare data and train model
     data_dict = prepare_data(args, training_data)
-    model, idata = train(data_dict, args)
+    """Train the PyMC model and return fitted model with inference data."""
+    y = data_dict["y"]
+    X_std = data_dict["X_std"]
+    T, L, P, H = data_dict["T"], data_dict["L"], data_dict["P"], data_dict["H"]
 
+    # Convert constants to graph tensors
+    y_const = y
+    Xpast_const = X_std if P else None
+
+    with pm.Model() as model:
+        # ----- Fixed effects -----
+        intercept = pm.Normal("intercept", 0.0, 5.0)
+        if P:
+            beta = pm.Normal("beta", 0.0, 1.0, shape=P)
+            linpast = intercept + pt.tensordot(
+                pt.as_tensor_variable(Xpast_const), beta, axes=[2, 0]
+            )
+        else:
+            linpast = intercept + pt.zeros((T, L))
+
+        # ----- AR(1) process using PyMC's built-in AR distribution -----
+        rho = pm.Uniform("rho", lower=-0.99, upper=0.99)
+        sigma_u = pm.HalfNormal("sigma_u", 1.0)
+
+        # AR(1) process for each location independently
+        # pm.AR expects shape (T, L) and creates an AR process along the time dimension
+        u_seq = pm.AR("u_ar", rho=rho, sigma=sigma_u, shape=(T, L))
+
+        # ----- Observation model: Negative Binomial -----
+        alpha = pm.HalfNormal("alpha", 1.0)
+        mu_past = pt.exp(linpast + u_seq)
+        y_like = pm.NegativeBinomial("y", mu=mu_past, alpha=alpha, observed=y_const)
+
+        idata = pm.sample(
+            draws=args.draws,
+            tune=args.tune,
+            chains=args.chains,
+            target_accept=0.9,
+            random_seed=args.seed,
+            progressbar=True,
+        )
     # Return everything needed for prediction
     return (model, idata, data_dict, args)
 
@@ -255,8 +200,68 @@ def on_predict(model_and_data: tuple, historic_data: pd.DataFrame) -> pd.DataFra
     # But for now, we'll proceed with the existing approach
     
     # Generate predictions using the trained model
-    ppc = predict(model, idata, data_dict, args)
-    
+    X_std = data_dict["X_std"]
+    T, L, P, H = data_dict["T"], data_dict["L"], data_dict["P"], data_dict["H"]
+
+    # Prepare future covariates by holding last value
+    if P > 0:
+        X_future = np.tile(X_std[-1:, :, :], (H, 1, 1))  # hold last
+        Xfut_const = X_future
+    else:
+        Xfut_const = None
+
+    # Create a new model for prediction to avoid variable name conflicts
+    with pm.Model() as pred_model:
+        # Get parameter values from posterior
+        intercept_val = idata.posterior["intercept"].mean(dim=["chain", "draw"]).values
+        sigma_u_val = idata.posterior["sigma_u"].mean(dim=["chain", "draw"]).values
+        rho_val = idata.posterior["rho"].mean(dim=["chain", "draw"]).values
+        alpha_val = idata.posterior["alpha"].mean(dim=["chain", "draw"]).values
+
+        # Fixed effects for future periods
+        if P:
+            beta_val = idata.posterior["beta"].mean(dim=["chain", "draw"]).values
+            linfut = intercept_val + pt.tensordot(
+                pt.as_tensor_variable(Xfut_const),
+                pt.as_tensor_variable(beta_val),
+                axes=[2, 0],
+            )
+        else:
+            linfut = intercept_val + pt.zeros((H, L))
+
+        # Get the last values from the trained AR process
+        # Extract last time step from the AR process
+        u_ar_last = (
+            idata.posterior["u_ar"]
+            .isel(u_ar_dim_0=-1)
+            .mean(dim=["chain", "draw"])
+            .values
+        )  # (L,)
+
+        # Create future AR process starting from last observed state
+        unique_id = str(uuid.uuid4())[:8]
+
+        # For prediction, we'll use a simple AR(1) continuation
+        # Initialize with last observed values
+        u_fut = [pt.as_tensor_variable(u_ar_last)]
+
+        # Generate H future steps
+        for h in range(H):
+            noise = pm.Normal(f"noise_{unique_id}_{h}", 0.0, sigma_u_val, shape=(L,))
+            next_u = rho_val * u_fut[-1] + noise
+            u_fut.append(next_u)
+
+        # Stack future AR values (skip initial value)
+        u_fut_seq = pt.stack(u_fut[1:], axis=0)  # (H, L)
+
+        mu_future = pt.exp(linfut + u_fut_seq)
+        y_fut = pm.NegativeBinomial(f"y_fut_{unique_id}", mu=mu_future, alpha=alpha_val)
+
+        # Sample from the prediction model
+        ppc = pm.sample_prior_predictive(
+            samples=len(idata.posterior.chain) * len(idata.posterior.draw)
+        )
+
     # Format predictions into DataFrame
     result_df = format_predictions(ppc, data_dict, args)
     
