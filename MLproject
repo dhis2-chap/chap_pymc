@@ -42,6 +42,22 @@ user_options:
     default: 4
     title: Chains
     type: integer
+  use_seasonal_effects:
+    default: false
+    title: Use Seasonal Effects
+    type: boolean
+  seasonal_periods:
+    default: 12
+    title: Seasonal Periods
+    type: integer
+  seasonal_sigma_base:
+    default: 1.0
+    title: Base Seasonal Effect Sigma
+    type: number
+  seasonal_sigma_loc:
+    default: 0.5
+    title: Location Seasonal Effect Sigma
+    type: number
 
 entry_points:
   train:

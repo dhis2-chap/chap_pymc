@@ -9,6 +9,8 @@ import argparse
 import uuid
 import pickle
 import json
+from _ast import arg
+
 import yaml
 import numpy as np
 import pandas as pd
@@ -30,6 +32,11 @@ class Config(pydantic.BaseModel):
     target_col: str = 'disease_cases'
     date_col: str = 'time_period'
     loc_col: str = 'location'
+    # Seasonal random effect parameters
+    use_seasonal_effects: bool = True
+    seasonal_periods: int = 12  # 12 months in a year
+    seasonal_sigma_base: float = 1.0  # Prior std for base seasonal effect
+    seasonal_sigma_loc: float = 0.5   # Prior std for location-specific seasonal effects
 
 def complete_monthly_panel(df, date_col, loc_col, cols, freq="MS"):
     df = df.copy()
@@ -59,6 +66,11 @@ def safe_impute(M):
     df = df.interpolate(limit_direction="both").ffill().bfill()
     return df.to_numpy()
 
+def extract_month_indices(time_idx):
+    """Extract month indices (0-11) from time index for seasonal effects."""
+    months = pd.to_datetime(time_idx).month - 1  # Convert to 0-11
+    return months.values
+
 def prepare_data(args: Config, raw):
     """Prepare and preprocess data for training."""
 
@@ -79,6 +91,10 @@ def prepare_data(args: Config, raw):
     P = X.shape[2]
     scaler = StandardScaler().fit(X.reshape(T*L, P))
     X_std = scaler.transform(X.reshape(T*L, P)).reshape(T, L, P)
+    
+    # Extract month indices for seasonal effects
+    month_indices = extract_month_indices(time_idx) if args.use_seasonal_effects else None
+    
     return {
         'y': y,
         'X_std': X_std,
@@ -89,7 +105,8 @@ def prepare_data(args: Config, raw):
         'T': T,
         'L': L,
         'P': P,
-        'H': H
+        'H': H,
+        'month_indices': month_indices
     }
 
 
@@ -195,11 +212,15 @@ def prepare_extended_data(data_dict, historic_data, args):
     else:
         X_extended = None
     
+    # Extract month indices for seasonal effects (extended period)
+    extended_month_indices = extract_month_indices(extended_time_idx) if args.use_seasonal_effects else None
+    
     return {
         **data_dict,
         'T_extended': len(extended_time_idx),
         'X_extended': X_extended,
-        'extended_time_idx': extended_time_idx
+        'extended_time_idx': extended_time_idx,
+        'extended_month_indices': extended_month_indices
     }
 
 def continue_ar_process(idata, T_orig, T_extended, sigma_u_val, rho_val, L):
@@ -237,7 +258,7 @@ def continue_ar_process(idata, T_orig, T_extended, sigma_u_val, rho_val, L):
     
     return u_current
 
-def format_predictions_from_historic_end(ppc, extended_data_dict, args):
+def format_predictions_from_historic_end(ppc, extended_data_dict, args: Config):
     """Format predictions starting from end of historic data."""
     extended_time_idx = extended_data_dict['extended_time_idx']
     locs = extended_data_dict['locs']
@@ -260,8 +281,10 @@ def format_predictions_from_historic_end(ppc, extended_data_dict, args):
         raise ValueError("Could not find y_fut variable in predictions")
     
     fut_Y = ppc.prior[y_fut_var]  # (chain, draws, H, L)
-    # Flatten chain and draws dimensions  
+    # Flatten chain and draws dimensions
+    print(fut_Y.shape)
     fut_Y = fut_Y.stack(sample=('chain', 'draw'))  # (sample, H, L)
+    print(fut_Y.shape)
     fut_dates = [str(p)[:7] for p in fut_dates]
     
     rows = [
@@ -269,7 +292,10 @@ def format_predictions_from_historic_end(ppc, extended_data_dict, args):
         for h in range(H)
         for l in range(len(locs))
     ]
-    col_names = ['time_period', 'location'] + [f'sample_{i}' for i in range(fut_Y.shape[-1])]
+
+    sample_names = [f'sample_{i}' for i in range(fut_Y.shape[-1])]
+    assert len(sample_names) == args.draws*args.chains, f"Sample count mismatch: expected {args.draws*args.chains}, got {len(sample_names)}"
+    col_names = ['time_period', 'location'] + sample_names
     out_df = pd.DataFrame(rows, columns=col_names)
     
     return out_df
@@ -290,6 +316,7 @@ def on_train(training_data: pd.DataFrame, args: Config= Config()) -> tuple:
     # Convert constants to graph tensors
     y_const = y
     Xpast_const = X_std if P else None
+    month_indices = data_dict["month_indices"]
 
     with pm.Model() as model:
         # ----- Fixed effects -----
@@ -302,6 +329,35 @@ def on_train(training_data: pd.DataFrame, args: Config= Config()) -> tuple:
         else:
             linpast = intercept + pt.zeros((T, L))
 
+        # ----- Seasonal effects (if enabled) -----
+        seasonal_effects = pt.zeros((T, L))
+        if args.use_seasonal_effects:
+            # Base seasonal effect with cyclical random walk
+            seasonal_sigma_base = pm.HalfNormal("seasonal_sigma_base", args.seasonal_sigma_base)
+            
+            # Create cyclical random walk for base seasonal effect (12 months)
+            # Use a random walk with wrap-around constraint
+            seasonal_base_raw = pm.GaussianRandomWalk("seasonal_base_raw", 
+                                                     sigma=seasonal_sigma_base, 
+                                                     shape=args.seasonal_periods)
+            # Apply zero-sum constraint to make it identifiable
+            seasonal_base = seasonal_base_raw - pt.mean(seasonal_base_raw)
+            
+            # Location-specific seasonal effects (more regularized)
+            seasonal_sigma_loc = pm.HalfNormal("seasonal_sigma_loc", args.seasonal_sigma_loc)
+            seasonal_loc_raw = pm.Normal("seasonal_loc_raw", 0.0, seasonal_sigma_loc, 
+                                       shape=(args.seasonal_periods, L))
+            # Apply zero-sum constraint across months for each location
+            seasonal_loc = seasonal_loc_raw - pt.mean(seasonal_loc_raw, axis=0)
+            
+            # Map seasonal effects to time periods using month indices
+            month_tensor = pt.as_tensor_variable(month_indices)
+            seasonal_base_mapped = seasonal_base[month_tensor]  # (T,)
+            seasonal_loc_mapped = seasonal_loc[month_tensor, :]  # (T, L)
+            
+            # Total seasonal effect = base + location-specific
+            seasonal_effects = seasonal_base_mapped[:, None] + seasonal_loc_mapped
+
         # ----- AR(1) process using PyMC's built-in AR distribution -----
         rho = pm.Uniform("rho", lower=-0.99, upper=0.99)
         sigma_u = pm.HalfNormal("sigma_u", 1.0)
@@ -312,7 +368,7 @@ def on_train(training_data: pd.DataFrame, args: Config= Config()) -> tuple:
 
         # ----- Observation model: Negative Binomial -----
         alpha = pm.HalfNormal("alpha", 1.0)
-        mu_past = pt.exp(linpast + u_seq)
+        mu_past = pt.exp(linpast + seasonal_effects + u_seq)
         y_like = pm.NegativeBinomial("y", mu=mu_past, alpha=alpha, observed=y_const)
 
         idata = pm.sample(
@@ -365,6 +421,30 @@ def on_predict(model_and_data: tuple, historic_data: pd.DataFrame, args: Config=
         else:
             linfut = intercept_val + pt.zeros((H, L))
 
+        # Seasonal effects for future periods
+        seasonal_effects_fut = pt.zeros((H, L))
+        if args.use_seasonal_effects:
+            # Get seasonal parameters from posterior
+            seasonal_base_val = idata.posterior["seasonal_base_raw"].mean(dim=["chain", "draw"]).values
+            seasonal_base_val = seasonal_base_val - np.mean(seasonal_base_val)  # Apply zero-sum constraint
+            
+            seasonal_loc_val = idata.posterior["seasonal_loc_raw"].mean(dim=["chain", "draw"]).values
+            seasonal_loc_val = seasonal_loc_val - np.mean(seasonal_loc_val, axis=0)  # Zero-sum constraint
+            
+            # Generate future month indices starting from end of historic data
+            extended_time_idx = extended_data_dict['extended_time_idx']
+            last_date = pd.Timestamp(extended_time_idx[-1])
+            future_start_date = last_date + pd.tseries.frequencies.to_offset(args.freq)
+            future_dates = pd.date_range(future_start_date, periods=H, freq=args.freq)
+            future_month_indices = extract_month_indices(future_dates)
+            
+            # Map seasonal effects to future periods
+            seasonal_base_fut = seasonal_base_val[future_month_indices]  # (H,)
+            seasonal_loc_fut = seasonal_loc_val[future_month_indices, :]  # (H, L)
+            
+            # Total seasonal effect = base + location-specific
+            seasonal_effects_fut = pt.as_tensor_variable(seasonal_base_fut)[:, None] + pt.as_tensor_variable(seasonal_loc_fut)
+
         # Continue AR(1) process from training through historic period to get final state
         u_ar_extended = continue_ar_process(idata, T_orig, T_extended, sigma_u_val, rho_val, L)
 
@@ -384,7 +464,7 @@ def on_predict(model_and_data: tuple, historic_data: pd.DataFrame, args: Config=
         # Stack future AR values (skip initial value)
         u_fut_seq = pt.stack(u_fut[1:], axis=0)  # (H, L)
 
-        mu_future = pt.exp(linfut + u_fut_seq)
+        mu_future = pt.exp(linfut + seasonal_effects_fut + u_fut_seq)
         y_fut = pm.NegativeBinomial(f"y_fut_{unique_id}", mu=mu_future, alpha=alpha_val)
 
         # Sample from the prediction model
@@ -401,7 +481,7 @@ def on_predict(model_and_data: tuple, historic_data: pd.DataFrame, args: Config=
 app = cyclopts.App()
 
 @app.command()
-def train(train_data: str, model: str, model_config: str | None = None):
+def train(train_data: str, model: str, model_config: str):
 
     config = load_config(model_config)
     df = pd.read_csv(train_data)
@@ -428,13 +508,10 @@ def train(train_data: str, model: str, model_config: str | None = None):
 
 
 def load_config(config_filename):
-    if config_filename is None:
-        config = Config()
-    else:
-        with open(config_filename, 'r') as f:
-            config_dict = yaml.safe_load(f)
-        config = Config(**config_dict)
-    return config
+    with open(config_filename, "r") as f:
+        config_dict = yaml.safe_load(f)
+    return Config(**config_dict)
+
 
 
 @app.command()
@@ -482,7 +559,7 @@ def test():
         historic_data='test_data2/historic_data.csv',
         future_data='test_data2/future_data.csv',
     )
-    config_filename = 'test_config.yaml'
+    config_filename = 'real_config.yaml'
     train(fileset.train_data,
           'test_runs/model', config_filename)
     predict('test_runs/model',

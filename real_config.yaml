@@ -1,0 +1,12 @@
+covariate_names:
+  - rainfall
+  - mean_temperature
+horizon: 3
+tune: 100
+draws: 50
+chains: 2
+seed: 123
+freq: "MS"
+target_col: "disease_cases"
+date_col: "time_period"
+loc_col: "location"
