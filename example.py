@@ -12,8 +12,6 @@ from sklearn.preprocessing import StandardScaler
 import pydantic
 import pymc as pm
 import pytensor.tensor as pt
-import pytensor
-from pydantic import BaseModel
 
 def parse_args():
     ap = argparse.ArgumentParser()
@@ -75,22 +73,16 @@ def prepare_data(args, raw):
     y = np.clip(y, 0, None).astype(int)
 
     # Covariates (optional) -> standardize
-    X_list, feat_names = [], []
-    X_list.append(to_tensor_panels(panel, time_idx, locs, args.date_col, args.loc_col, args.rain_col))
-    feat_names.append(args.rain_col)
-    X_list.append(to_tensor_panels(panel, time_idx, locs, args.date_col, args.loc_col, args.temp_col))
-    feat_names.append(args.temp_col)
-
-    if X_list:
-        X = np.stack(X_list, axis=2)  # (T, L, P)
-        P = X.shape[2]
-        scaler = StandardScaler().fit(X.reshape(T*L, P))
-        X_std = scaler.transform(X.reshape(T*L, P)).reshape(T, L, P)
-    else:
-        P = 0
-        X_std = None
-        scaler = None
-
+    feat_names = [args.rain_col, args.temp_col]
+    X_list = [to_tensor_panels(panel, time_idx, locs, args.date_col, args.loc_col, col) for col in [args.rain_col, args.temp_col]]
+    # X_list.append(to_tensor_panels(panel, time_idx, locs, args.date_col, args.loc_col, args.rain_col))
+    # feat_names.append(args.rain_col)
+    # X_list.append(to_tensor_panels(panel, time_idx, locs, args.date_col, args.loc_col, args.temp_col))
+    # feat_names.append(args.temp_col)
+    X = np.stack(X_list, axis=2)  # (T, L, P)
+    P = X.shape[2]
+    scaler = StandardScaler().fit(X.reshape(T*L, P))
+    X_std = scaler.transform(X.reshape(T*L, P)).reshape(T, L, P)
     return {
         'y': y,
         'X_std': X_std,
@@ -124,27 +116,13 @@ def train(data_dict, args):
         else:
             linpast = intercept + pt.zeros((T, L))
 
-        # ----- Independent location effects (no spatial correlation) -----
-        sigma_u = pm.HalfNormal("sigma_u", 1.0)
-
-        # ----- AR(1) in time with independent innovations -----
+        # ----- AR(1) process using PyMC's built-in AR distribution -----
         rho = pm.Uniform("rho", lower=-0.99, upper=0.99)
-
-        # Initial state u0 ~ independent normal
-        u0 = pm.Normal("u0", 0.0, sigma_u, shape=L)  # (L,)
-
-        # Independent innovations for T steps (training only)
-        v_past = pm.Normal("v_past", 0.0, sigma_u, shape=(T, L))  # (T, L)
-
-        def ar1_step(prev_u, v_t, rho_):
-            return rho_ * prev_u + v_t
-
-        u_seq, _ = pytensor.scan(
-            fn=ar1_step,
-            sequences=[v_past],
-            outputs_info=[u0],
-            non_sequences=[rho],
-        )  # (T, L)
+        sigma_u = pm.HalfNormal("sigma_u", 1.0)
+        
+        # AR(1) process for each location independently
+        # pm.AR expects shape (T, L) and creates an AR process along the time dimension
+        u_seq = pm.AR("u_ar", rho=rho, sigma=sigma_u, shape=(T, L))
 
         # ----- Observation model: Negative Binomial -----
         alpha = pm.HalfNormal("alpha", 1.0)
@@ -166,9 +144,6 @@ def predict(model, idata, data_dict, args):
     """Generate predictions using the trained model."""
     import uuid
     X_std = data_dict['X_std']
-    scaler = data_dict['scaler']
-    time_idx = data_dict['time_idx']
-    locs = data_dict['locs']
     T, L, P, H = data_dict['T'], data_dict['L'], data_dict['P'], data_dict['H']
     
     # Prepare future covariates by holding last value
@@ -186,30 +161,32 @@ def predict(model, idata, data_dict, args):
         rho_val = idata.posterior['rho'].mean(dim=['chain', 'draw']).values
         alpha_val = idata.posterior['alpha'].mean(dim=['chain', 'draw']).values
         
-        # Fixed effects
+        # Fixed effects for future periods
         if P:
             beta_val = idata.posterior['beta'].mean(dim=['chain', 'draw']).values
             linfut = intercept_val + pt.tensordot(pt.as_tensor_variable(Xfut_const), pt.as_tensor_variable(beta_val), axes=[2, 0])
         else:
             linfut = intercept_val + pt.zeros((H, L))
         
-        # Future innovations
+        # Get the last values from the trained AR process
+        # Extract last time step from the AR process
+        u_ar_last = idata.posterior['u_ar'].isel(u_ar_dim_0=-1).mean(dim=['chain', 'draw']).values  # (L,)
+        
+        # Create future AR process starting from last observed state
         unique_id = str(uuid.uuid4())[:8]
-        v_fut = pm.Normal(f"v_fut_{unique_id}", 0.0, sigma_u_val, shape=(H, L))
         
-        # Continue AR(1) from last training state
-        last_u = idata.posterior['u0'].mean(dim=['chain', 'draw']).values
+        # For prediction, we'll use a simple AR(1) continuation
+        # Initialize with last observed values
+        u_fut = [pt.as_tensor_variable(u_ar_last)]
         
-        # Generate future sequence
-        def ar1_step(prev_u, v_t, rho_):
-            return rho_ * prev_u + v_t
-            
-        u_fut_seq, _ = pytensor.scan(
-            fn=ar1_step,
-            sequences=[v_fut],
-            outputs_info=[pt.as_tensor_variable(last_u)],
-            non_sequences=[pt.as_tensor_variable(rho_val)],
-        )  # (H, L)
+        # Generate H future steps
+        for h in range(H):
+            noise = pm.Normal(f"noise_{unique_id}_{h}", 0.0, sigma_u_val, shape=(L,))
+            next_u = rho_val * u_fut[-1] + noise
+            u_fut.append(next_u)
+        
+        # Stack future AR values (skip initial value)
+        u_fut_seq = pt.stack(u_fut[1:], axis=0)  # (H, L)
 
         mu_future = pt.exp(linfut + u_fut_seq)
         y_fut = pm.NegativeBinomial(f"y_fut_{unique_id}", mu=mu_future, alpha=alpha_val)
@@ -260,9 +237,7 @@ def on_train(training_data: pd.DataFrame) -> tuple:
     # In a real implementation, you might want to pass args differently
     args = Args(tune=1, draws=1, chains=2)
     
-    # Save the training data to a temporary file so prepare_data can read it
-    import tempfile
-    import os
+    # Prepare data directly
     # Prepare data and train model
     data_dict = prepare_data(args, training_data)
     model, idata = train(data_dict, args)
