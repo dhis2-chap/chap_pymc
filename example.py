@@ -1,5 +1,5 @@
 # pymc_st_arf_model_nomutable.py
-# Spatio-temporal PyMC model with AR(1) in time and spatial GP innovations.
+# Temporal PyMC model with AR(1) in time and independent location effects.
 # No pm.MutableData / pm.Data usage — just plain NumPy constants.
 #
 # Usage:
@@ -69,13 +69,9 @@ def main(args=None):
 
     has_rain = a.rain_col in raw.columns
     has_temp = a.temp_col in raw.columns
-    has_latlon = (a.lat_col in raw.columns) and (a.lon_col in raw.columns)
-
     keep_cols = [a.target_col]
     if has_rain: keep_cols.append(a.rain_col)
     if has_temp: keep_cols.append(a.temp_col)
-    if has_latlon:
-        loc_latlon = raw[[a.loc_col, a.lat_col, a.lon_col]].drop_duplicates(a.loc_col)
 
     panel, time_idx, locs = complete_monthly_panel(raw, a.date_col, a.loc_col, keep_cols, freq=a.freq)
     T, L, H = len(time_idx), len(locs), a.horizon
@@ -106,13 +102,7 @@ def main(args=None):
         X_std = None
         X_future = None
 
-    # Spatial coordinates (L, 2) if available
-    latlon = None
-    if has_latlon:
-        latlon = np.zeros((L, 2))
-        ll = loc_latlon.set_index(a.loc_col).loc[locs]
-        latlon[:, 0] = ll[a.lat_col].to_numpy()
-        latlon[:, 1] = ll[a.lon_col].to_numpy()
+    # Spatial coordinates removed - no longer needed
 
     # Convert constants to graph tensors
     y_const = y
@@ -130,28 +120,17 @@ def main(args=None):
             linpast = intercept + pt.zeros((T, L))
             linfut  = intercept + pt.zeros((H, L))
 
-        # ----- Spatial kernel (GP over locations) or iid fallback -----
-        if latlon is not None:
-            ell = pm.HalfNormal("ell", 2.0)
-            amp = pm.HalfNormal("amp", 1.0)
-            cov = pm.gp.cov.Matern52(2, ls=ell)     # ls arg name is widely supported
-            K = (amp**2) * cov(latlon) + 1e-6 * pt.eye(L)
-        else:
-            amp = pm.HalfNormal("amp", 1.0)
-            K = (amp**2) * pt.eye(L)
+        # ----- Independent location effects (no spatial correlation) -----
+        sigma_u = pm.HalfNormal("sigma_u", 1.0)
 
-        K_chol = pt.linalg.cholesky(K)
-
-        # ----- AR(1) in time with spatially correlated innovations -----
+        # ----- AR(1) in time with independent innovations -----
         rho = pm.Uniform("rho", lower=-0.99, upper=0.99)
 
-        # Initial state u0 ~ MVN(0, K)
-        z0 = pm.Normal("z0", 0.0, 1.0, shape=L)
-        u0 = pt.dot(K_chol, z0)  # (L,)
+        # Initial state u0 ~ independent normal
+        u0 = pm.Normal("u0", 0.0, sigma_u, shape=L)  # (L,)
 
-        # Innovations for all T+H steps
-        z_full = pm.Normal("z_full", 0.0, 1.0, shape=(T + H, L))
-        v_full = pt.dot(z_full, K_chol.T)  # (T+H, L)
+        # Independent innovations for all T+H steps
+        v_full = pm.Normal("v_full", 0.0, sigma_u, shape=(T + H, L))  # (T+H, L)
 
         def ar1_step(prev_u, v_t, rho_):
             return rho_ * prev_u + v_t
