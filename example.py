@@ -7,7 +7,9 @@
 
 import argparse
 import uuid
-
+import pickle
+import json
+import yaml
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import StandardScaler
@@ -15,24 +17,19 @@ import pydantic
 import pymc as pm
 import pytensor.tensor as pt
 import cyclopts
+import arviz as az
 
-def parse_args():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--csv", required=True)
-    ap.add_argument("--date-col", default="time_period")
-    ap.add_argument("--loc-col", default="location")
-    ap.add_argument("--target-col", default="disease_cases")
-    ap.add_argument("--rain-col", default="rainfall")
-    ap.add_argument("--temp-col", default="temperature")
-    ap.add_argument("--lat-col", default="lat")
-    ap.add_argument("--lon-col", default="lon")
-    ap.add_argument("--freq", default="MS")
-    ap.add_argument("--horizon", type=int, default=3)
-    ap.add_argument("--tune", type=int, default=1000)
-    ap.add_argument("--draws", type=int, default=1000)
-    ap.add_argument("--chains", type=int, default=4)
-    ap.add_argument("--seed", type=int, default=42)
-    return ap.parse_args()
+class Config(pydantic.BaseModel):
+    covariate_names: list[str] = ['rainfall', 'mean_temperature']
+    horizon: int = 3
+    tune: int = 100
+    draws: int = 100
+    chains: int = 2
+    seed: int = 42
+    freq: str = "MS"  # Monthly start frequency
+    target_col: str = 'disease_cases'
+    date_col: str = 'time_period'
+    loc_col: str = 'location'
 
 def complete_monthly_panel(df, date_col, loc_col, cols, freq="MS"):
     df = df.copy()
@@ -62,22 +59,22 @@ def safe_impute(M):
     df = df.interpolate(limit_direction="both").ffill().bfill()
     return df.to_numpy()
 
-def prepare_data(args, raw):
+def prepare_data(args: Config, raw):
     """Prepare and preprocess data for training."""
 
-    keep_cols = [args.target_col, args.rain_col, args.temp_col]
+    keep_cols = [args.target_col] + args.covariate_names
     panel, time_idx, locs = complete_monthly_panel(raw, args.date_col, args.loc_col, keep_cols, freq=args.freq)
     T, L, H = len(time_idx), len(locs), args.horizon
 
     # Target (T, L)
-    y = to_tensor_panels(panel, time_idx, locs, args.date_col, args.loc_col, args.target_col)
+    y = to_tensor_panels(panel, time_idx, locs, 'time_period', 'location', 'disease_cases')
     #if np.isnan(y).any():
     #    y = safe_impute(y)
     y = np.clip(y, 0, None).astype(int)
 
     # Covariates (optional) -> standardize
-    feat_names = [args.rain_col, args.temp_col]
-    X_list = [to_tensor_panels(panel, time_idx, locs, args.date_col, args.loc_col, col) for col in [args.rain_col, args.temp_col]]
+    feat_names = args.covariate_names
+    X_list = [to_tensor_panels(panel, time_idx, locs, args.date_col, args.loc_col, col) for col in feat_names]
     X = np.stack(X_list, axis=2)  # (T, L, P)
     P = X.shape[2]
     scaler = StandardScaler().fit(X.reshape(T*L, P))
@@ -94,12 +91,6 @@ def prepare_data(args, raw):
         'P': P,
         'H': H
     }
-
-
-def train(data_dict, args):
-
-
-    return model, idata
 
 
 def format_predictions(ppc, data_dict, args):
@@ -137,12 +128,11 @@ def format_predictions(ppc, data_dict, args):
     out_df.to_csv('forecast_samples.csv', index=False)
     return out_df
 
-def on_train(training_data: pd.DataFrame) -> tuple:
+def on_train(training_data: pd.DataFrame, args: Config= Config()) -> tuple:
     '''This should train a model and return everything needed for prediction'''
     # We need to extract args from somewhere - for now, use default Args
     # In a real implementation, you might want to pass args differently
-    args = Args(tune=1, draws=1, chains=2)
-    
+
     # Prepare data directly
     # Prepare data and train model
     data_dict = prepare_data(args, training_data)
@@ -190,7 +180,7 @@ def on_train(training_data: pd.DataFrame) -> tuple:
     # Return everything needed for prediction
     return (model, idata, data_dict, args)
 
-def on_predict(model_and_data: tuple, historic_data: pd.DataFrame) -> pd.DataFrame:
+def on_predict(model_and_data: tuple, historic_data: pd.DataFrame, args: Config= Config()) -> pd.DataFrame:
     '''This shoud use the model and data generated during training to predict future disease counts based on the historic data'''
     # Unpack the training results
     model, idata, data_dict, args = model_and_data
@@ -268,46 +258,90 @@ def on_predict(model_and_data: tuple, historic_data: pd.DataFrame) -> pd.DataFra
     return result_df
 
 
-def main(args=None):
-    """Main function that orchestrates training and prediction using on_train and on_predict."""
-    if args is None:
-        a = parse_args()
-    else:
-        a = args
-    
-    # Load training data
-    training_data = pd.read_csv(a.csv)
-    
-    # Train model using on_train
-    model_and_data = on_train(training_data)
-    
-    # Generate predictions using on_predict 
-    # For now, we'll pass the same training data as historic_data
-    # In practice, this could be different/updated data
-    out_df = on_predict(model_and_data, training_data)
-    
-    return out_df
+app = cyclopts.App()
 
-class Args(pydantic.BaseModel):
-    csv: str = '/home/knut/Data/ch_data/full_data/laos.csv'
-    date_col: str = "time_period"
-    loc_col: str = "location"
-    target_col: str = "disease_cases"
-    rain_col: str = "rainfall"
-    temp_col: str = "mean_temperature"
-    freq: str = "MS"
-    horizon: int = 3
-    tune: int = 10
-    draws: int = 10
-    chains: int = 2
-    seed: int = 42
+@app.command()
+def train(train_data: str, model: str, model_config: str | None = None):
+
+    config = load_config(model_config)
+    df = pd.read_csv(train_data)
+    model_and_data = on_train(df, config)
+    
+    # Extract components that can be serialized
+    model_dat, idata, data_dict, args = model_and_data
+    
+    # Create base filename without extension
+    base_name = model.rsplit('.', 1)[0] if '.' in model else model
+    
+    # Save inference data using arviz (NetCDF format)
+    idata_filename = f"{base_name}_idata.nc"
+    idata.to_netcdf(idata_filename)
+    
+    # Save data dictionary and config using pickle
+    data_filename = f"{base_name}_data.pkl"
+    with open(data_filename, 'wb') as f:
+        pickle.dump((data_dict, args), f)
+    
+    print(f"Model saved to:")
+    print(f"  Inference data: {idata_filename}")
+    print(f"  Data & config: {data_filename}")
+
+
+def load_config(config_filename):
+    if config_filename is None:
+        config = Config()
+    else:
+        with open(config_filename, 'r') as f:
+            config_dict = yaml.safe_load(f)
+        config = Config(**config_dict)
+    return config
+
+
+@app.command()
+def predict(model: str,
+            historic_data: str,
+            future_data: str,
+            out_file: str,
+            model_config: str | None = None):
+    # Create base filename without extension
+    base_name = model.rsplit('.', 1)[0] if '.' in model else model
+    args = load_config(model_config)
+    # Load inference data from NetCDF
+    idata_filename = f"{base_name}_idata.nc"
+    idata = az.from_netcdf(idata_filename)
+    
+    # Load data dictionary and config from pickle
+    data_filename = f"{base_name}_data.pkl"
+    with open(data_filename, 'rb') as f:
+        data_dict, args = pickle.load(f)
+    
+    # Create a dummy model object (we don't need the actual model for prediction)
+    model = None
+    
+    # Reconstruct the model_and_data tuple
+    model_and_data = (model, idata, data_dict, args)
+    
+    # Load historic data and make predictions
+    historic_data = pd.read_csv(historic_data)
+    out_df = on_predict(model_and_data, historic_data, args)
+    out_df.to_csv(out_file, index=False)
+    
+    print(f"Predictions saved to: {out_file}")
+
 
 def test():
-    df = main(args=Args(tune=1, draws=1, chains=2))
+    config_filename = 'test_config.yaml'
+    train('/home/knut/Data/ch_data/full_data/laos.csv',
+          'test_runs/model', config_filename)
+    predict('test_runs/model',
+            '/home/knut/Data/ch_data/full_data/laos.csv',
+            '',
+            'test_runs/forecast_samples.csv',
+            config_filename)
+    df = pd.read_csv('test_runs/forecast_samples.csv')
     for colname in ['location', 'time_period', 'Sample_1']:
         assert colname in df.columns
 
 if __name__ == "__main__":
-    rows = main(args=Args())
-
-
+    app()
+    # rows = main(args=Args())
