@@ -128,6 +128,152 @@ def format_predictions(ppc, data_dict, args):
     out_df.to_csv('forecast_samples.csv', index=False)
     return out_df
 
+def prepare_extended_data(data_dict, historic_data, args):
+    """Prepare extended data that includes historic observations beyond training period."""
+    # Get original training data info
+    original_time_idx = data_dict['time_idx']
+    original_locs = data_dict['locs']
+    scaler = data_dict['scaler']
+    T_orig = data_dict['T']
+    L = data_dict['L'] 
+    P = data_dict['P']
+    
+    # Find the last training date
+    last_training_date = original_time_idx[-1]
+    
+    # Filter historic data to only include periods after training
+    historic_data = historic_data.copy()
+    historic_data[args.date_col] = pd.to_datetime(historic_data[args.date_col])
+    extended_historic = historic_data[historic_data[args.date_col] > last_training_date]
+    
+    if len(extended_historic) == 0:
+        # No new historic data, return original data
+        return {
+            **data_dict,
+            'T_extended': T_orig,
+            'X_extended': data_dict['X_std'],
+            'extended_time_idx': original_time_idx
+        }
+    
+    # Create extended time index
+    extended_periods = extended_historic[args.date_col].unique()
+    extended_periods = pd.to_datetime(extended_periods)
+    extended_periods = pd.DatetimeIndex(extended_periods).sort_values()
+    extended_time_idx = original_time_idx.union(extended_periods).sort_values()
+    
+    # Process extended historic data similar to training data
+    keep_cols = [args.target_col] + args.covariate_names
+    extended_panel, _, extended_locs = complete_monthly_panel(
+        extended_historic, args.date_col, args.loc_col, keep_cols, freq=args.freq
+    )
+    
+    # Ensure locations match original training data
+    if set(extended_locs) != set(original_locs):
+        print(f"Warning: Location mismatch. Original: {set(original_locs)}, Extended: {set(extended_locs)}")
+    
+    # Extract extended covariates for the new period only
+    if P > 0:
+        # Get covariate data for the extended period
+        extended_start_idx = len(original_time_idx) 
+        extended_end_idx = len(extended_time_idx)
+        
+        X_extended_new = []
+        for col in args.covariate_names:
+            X_col = to_tensor_panels(extended_panel, extended_time_idx, original_locs, 
+                                   args.date_col, args.loc_col, col)
+            X_extended_new.append(X_col[extended_start_idx:extended_end_idx, :])
+        
+        if X_extended_new:
+            X_extended_new = np.stack(X_extended_new, axis=2)  # (T_new, L, P)
+            # Standardize using original scaler
+            T_new = X_extended_new.shape[0]
+            X_extended_new_std = scaler.transform(X_extended_new.reshape(T_new*L, P)).reshape(T_new, L, P)
+            # Combine with original standardized data
+            X_extended = np.concatenate([data_dict['X_std'], X_extended_new_std], axis=0)
+        else:
+            X_extended = data_dict['X_std']
+    else:
+        X_extended = None
+    
+    return {
+        **data_dict,
+        'T_extended': len(extended_time_idx),
+        'X_extended': X_extended,
+        'extended_time_idx': extended_time_idx
+    }
+
+def continue_ar_process(idata, T_orig, T_extended, sigma_u_val, rho_val, L):
+    """Continue AR(1) process from training end through historic period."""
+    if T_extended <= T_orig:
+        # No extension needed
+        u_ar_last = (
+            idata.posterior["u_ar"]
+            .isel(u_ar_dim_0=-1)
+            .mean(dim=["chain", "draw"])
+            .values
+        )
+        return pt.as_tensor_variable(u_ar_last)
+    
+    # Get starting point from training
+    u_ar_last = (
+        idata.posterior["u_ar"]
+        .isel(u_ar_dim_0=-1)
+        .mean(dim=["chain", "draw"])
+        .values
+    )
+    
+    # Continue AR process for the extended period
+    steps_to_continue = T_extended - T_orig
+    u_current = pt.as_tensor_variable(u_ar_last)
+    
+    # Generate AR steps for the historic extension period
+    # Note: We're using the mean behavior here, not sampling noise
+    for step in range(steps_to_continue):
+        # For deterministic continuation, we could omit noise, but let's include it
+        # to maintain stochastic behavior
+        unique_id = str(uuid.uuid4())[:8]
+        noise = pm.Normal(f"historic_noise_{unique_id}_{step}", 0.0, sigma_u_val, shape=(L,))
+        u_current = rho_val * u_current + noise
+    
+    return u_current
+
+def format_predictions_from_historic_end(ppc, extended_data_dict, args):
+    """Format predictions starting from end of historic data."""
+    extended_time_idx = extended_data_dict['extended_time_idx']
+    locs = extended_data_dict['locs']
+    H = extended_data_dict['H']
+    
+    # Generate future dates starting from end of historic data
+    fut_dates = pd.date_range(
+        extended_time_idx[-1] + pd.tseries.frequencies.to_offset(args.freq),
+        periods=H, freq=args.freq
+    )
+    
+    # Find the y_fut variable (it has a unique ID suffix)
+    y_fut_var = None
+    for var_name in ppc.prior.data_vars:
+        if var_name.startswith('y_fut_'):
+            y_fut_var = var_name
+            break
+    
+    if y_fut_var is None:
+        raise ValueError("Could not find y_fut variable in predictions")
+    
+    fut_Y = ppc.prior[y_fut_var]  # (chain, draws, H, L)
+    # Flatten chain and draws dimensions  
+    fut_Y = fut_Y.stack(sample=('chain', 'draw'))  # (sample, H, L)
+    fut_dates = [str(p)[:7] for p in fut_dates]
+    
+    rows = [
+        [fut_dates[h], locs[l]] + list(fut_Y[h, l, :].values.tolist())
+        for h in range(H)
+        for l in range(len(locs))
+    ]
+    col_names = ['time_period', 'location'] + [f'sample_{i}' for i in range(fut_Y.shape[-1])]
+    out_df = pd.DataFrame(rows, columns=col_names)
+    
+    return out_df
+
 def on_train(training_data: pd.DataFrame, args: Config= Config()) -> tuple:
     '''This should train a model and return everything needed for prediction'''
     # We need to extract args from somewhere - for now, use default Args
@@ -181,21 +327,21 @@ def on_train(training_data: pd.DataFrame, args: Config= Config()) -> tuple:
     return (model, idata, data_dict, args)
 
 def on_predict(model_and_data: tuple, historic_data: pd.DataFrame, args: Config= Config()) -> pd.DataFrame:
-    '''This shoud use the model and data generated during training to predict future disease counts based on the historic data'''
+    '''Use trained model parameters to predict from the end of historic_data'''
     # Unpack the training results
     model, idata, data_dict, args = model_and_data
     
-    # For this implementation, we'll use the original data_dict for prediction
-    # The historic_data parameter could be used to update covariates if needed
-    # But for now, we'll proceed with the existing approach
+    # Prepare extended data that includes historic observations
+    extended_data_dict = prepare_extended_data(data_dict, historic_data, args)
     
-    # Generate predictions using the trained model
-    X_std = data_dict["X_std"]
-    T, L, P, H = data_dict["T"], data_dict["L"], data_dict["P"], data_dict["H"]
-
-    # Prepare future covariates by holding last value
+    # Get dimensions
+    T_orig, L, P, H = data_dict["T"], data_dict["L"], data_dict["P"], data_dict["H"]
+    T_extended = extended_data_dict["T_extended"]
+    
+    # Prepare future covariates by holding last value from historic data
+    X_extended = extended_data_dict["X_extended"]
     if P > 0:
-        X_future = np.tile(X_std[-1:, :, :], (H, 1, 1))  # hold last
+        X_future = np.tile(X_extended[-1:, :, :], (H, 1, 1))  # hold last from historic data
         Xfut_const = X_future
     else:
         Xfut_const = None
@@ -219,21 +365,15 @@ def on_predict(model_and_data: tuple, historic_data: pd.DataFrame, args: Config=
         else:
             linfut = intercept_val + pt.zeros((H, L))
 
-        # Get the last values from the trained AR process
-        # Extract last time step from the AR process
-        u_ar_last = (
-            idata.posterior["u_ar"]
-            .isel(u_ar_dim_0=-1)
-            .mean(dim=["chain", "draw"])
-            .values
-        )  # (L,)
+        # Continue AR(1) process from training through historic period to get final state
+        u_ar_extended = continue_ar_process(idata, T_orig, T_extended, sigma_u_val, rho_val, L)
 
-        # Create future AR process starting from last observed state
+        # Create future AR process starting from end of historic period
         unique_id = str(uuid.uuid4())[:8]
 
         # For prediction, we'll use a simple AR(1) continuation
-        # Initialize with last observed values
-        u_fut = [pt.as_tensor_variable(u_ar_last)]
+        # Initialize with last state after processing historic data
+        u_fut = [u_ar_extended]
 
         # Generate H future steps
         for h in range(H):
@@ -252,8 +392,8 @@ def on_predict(model_and_data: tuple, historic_data: pd.DataFrame, args: Config=
             samples=len(idata.posterior.chain) * len(idata.posterior.draw)
         )
 
-    # Format predictions into DataFrame
-    result_df = format_predictions(ppc, data_dict, args)
+    # Format predictions starting from end of historic data
+    result_df = format_predictions_from_historic_end(ppc, extended_data_dict, args)
     
     return result_df
 
@@ -338,9 +478,9 @@ class FileSet(pydantic.BaseModel):
 
 def test():
     fileset = FileSet(
-        train_data='test_data/training_data.csv',
-        historic_data='test_data/historic_data.csv',
-        future_data='test_data/future_data.csv',
+        train_data='test_data2/training_data.csv',
+        historic_data='test_data2/historic_data.csv',
+        future_data='test_data2/future_data.csv',
     )
     config_filename = 'test_config.yaml'
     train(fileset.train_data,
