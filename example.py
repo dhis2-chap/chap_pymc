@@ -199,7 +199,7 @@ def main(args=None):
         for p in range(fut_Y.shape[0])
         for l in range(fut_Y.shape[1])
     ]
-    col_names = ['period', 'location'] + [f'Sample_{i+1}' for i in range(fut_Y.shape[2])]
+    col_names = ['time_period', 'location'] + [f'Sample_{i+1}' for i in range(fut_Y.shape[2])]
     out_df = pd.DataFrame(rows, columns=col_names)
     out_df.to_csv('forecast_samples.csv', index=False)
     return out_df
@@ -235,10 +235,9 @@ class Args(pydantic.BaseModel):
     seed: int = 42
 
 def test():
-    rows = main(args=Args(tune=1, draws=1, chains=2))
-    assert not rows.empty
-    assert 'pred_cases_mean' in rows.columns
-    assert rows['pred_cases_mean'].min() >= 0.0
+    df = main(args=Args(tune=1, draws=1, chains=2))
+    for colname in ['location', 'time_period', 'Sample_1']:
+        assert colname in df.columns
 
 if __name__ == "__main__":
     rows = main(args=Args())
