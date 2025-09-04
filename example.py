@@ -123,7 +123,7 @@ def format_predictions(ppc, data_dict, args):
         for h in range(H)
         for l in range(len(locs))
     ]
-    col_names = ['time_period', 'location'] + [f'Sample_{i+1}' for i in range(fut_Y.shape[-1])]
+    col_names = ['time_period', 'location'] + [f'sample_{i}' for i in range(fut_Y.shape[-1])]
     out_df = pd.DataFrame(rows, columns=col_names)
     out_df.to_csv('forecast_samples.csv', index=False)
     return out_df
@@ -324,23 +324,43 @@ def predict(model: str,
     # Load historic data and make predictions
     historic_data = pd.read_csv(historic_data)
     out_df = on_predict(model_and_data, historic_data, args)
+    out_df = out_df.sort_values(by=['location', 'time_period'])
     out_df.to_csv(out_file, index=False)
     
     print(f"Predictions saved to: {out_file}")
 
 
+class FileSet(pydantic.BaseModel):
+    train_data: str
+    historic_data: str
+    future_data: str
+
+
 def test():
+    fileset = FileSet(
+        train_data='test_data/training_data.csv',
+        historic_data='test_data/historic_data.csv',
+        future_data='test_data/future_data.csv',
+    )
     config_filename = 'test_config.yaml'
-    train('/home/knut/Data/ch_data/full_data/laos.csv',
+    train(fileset.train_data,
           'test_runs/model', config_filename)
     predict('test_runs/model',
-            '/home/knut/Data/ch_data/full_data/laos.csv',
-            '',
+            fileset.historic_data,
+            fileset.future_data,
             'test_runs/forecast_samples.csv',
             config_filename)
     df = pd.read_csv('test_runs/forecast_samples.csv')
-    for colname in ['location', 'time_period', 'Sample_1']:
+
+    for colname in ['location', 'time_period', 'sample_0']:
         assert colname in df.columns
+    train_df = pd.read_csv(fileset.train_data)
+    future_periods = pd.read_csv(fileset.future_data)['time_period'].unique()
+    predicted_periods = df.time_period.unique()
+    assert set(future_periods) == set(predicted_periods)
+    n_locations = train_df['location'].nunique()
+    assert len(df) == n_locations * 3  # 3 horizons
+
 
 if __name__ == "__main__":
     app()
