@@ -2,8 +2,8 @@ covariate_names:
   - rainfall
   - mean_temperature
 horizon: 3
-tune: 100
-draws: 50
+tune: 500
+draws: 250
 chains: 2
 seed: 123
 freq: "MS"

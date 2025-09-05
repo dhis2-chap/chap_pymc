@@ -738,6 +738,9 @@ def plot_model_components(model_file: str, output_dir: str, config: Config):
     if config.use_location_effects and 'location_raw' in idata.posterior:
         plot_location_effects(idata, locations, f"{output_dir}/location_effects.png")
     
+    # 4. Create comprehensive parameter sampling figure
+    plot_all_parameter_samples(idata, config, f"{output_dir}/parameter_samples.png")
+    
     print(f"Model component plots saved to directory: {output_dir}")
 
 
@@ -896,6 +899,199 @@ def plot_location_effects(idata, locations, output_file: str):
     plt.close()
     
     print(f"Location effects plot saved to: {output_file}")
+
+
+def plot_all_parameter_samples(idata, config: Config, output_file: str):
+    """Create a comprehensive figure showing sampling diagnostics for all parameters."""
+    
+    # Define parameter categories and their display properties
+    param_info = {
+        # Core parameters (always present)
+        'intercept': {'label': 'Intercept', 'color': 'blue'},
+        'sigma_rw': {'label': 'Random Walk σ', 'color': 'green'},
+        'alpha': {'label': 'Overdispersion α', 'color': 'red'},
+        
+        # Covariate parameters (present if covariates exist)
+        'beta': {'label': 'Covariate β', 'color': 'purple', 'multi_dim': True},
+        
+        # Seasonal parameters (present if seasonal effects enabled)
+        'seasonal_sigma_base': {'label': 'Base Seasonal σ', 'color': 'orange'},
+        'seasonal_sigma_loc': {'label': 'Location Seasonal σ', 'color': 'brown'},
+        
+        # Location parameters (present if location effects enabled)  
+        'location_sigma': {'label': 'Location Effects σ', 'color': 'pink'},
+    }
+    
+    # Filter to only available parameters
+    available_params = []
+    for param_name, info in param_info.items():
+        if param_name in idata.posterior.data_vars:
+            available_params.append((param_name, info))
+    
+    n_params = len(available_params)
+    if n_params == 0:
+        print("No parameters found for plotting")
+        return
+    
+    # Create figure with subplots - 2 columns (trace + posterior) per parameter
+    cols = 2
+    rows = n_params
+    fig, axes = plt.subplots(rows, cols, figsize=(12, 3 * rows))
+    
+    # Handle case of single parameter
+    if n_params == 1:
+        axes = axes.reshape(1, -1)
+    
+    for i, (param_name, info) in enumerate(available_params):
+        param_data = idata.posterior[param_name]
+        
+        # Handle multi-dimensional parameters
+        if info.get('multi_dim', False) and param_data.ndim > 2:
+            # For multi-dimensional parameters like beta, plot the first dimension
+            if param_data.ndim == 3:  # (chain, draw, dim)
+                param_values = param_data.values[:, :, 0]  # Take first coefficient
+                param_label = f"{info['label']}[0]"
+            else:
+                param_values = param_data.values.reshape(param_data.shape[0], param_data.shape[1])
+                param_label = info['label']
+        else:
+            param_values = param_data.values
+            param_label = info['label']
+        
+        color = info['color']
+        
+        # Left subplot: Trace plot
+        ax_trace = axes[i, 0]
+        n_chains = param_values.shape[0]
+        
+        for chain in range(n_chains):
+            ax_trace.plot(param_values[chain, :], alpha=0.8, color=color, 
+                         label=f'Chain {chain+1}' if i == 0 else "")
+        
+        ax_trace.set_title(f'{param_label} - Trace Plot', fontsize=10, fontweight='bold')
+        ax_trace.set_xlabel('Draw')
+        ax_trace.set_ylabel('Value')
+        ax_trace.grid(True, alpha=0.3)
+        if i == 0:  # Only show legend for first parameter
+            ax_trace.legend()
+        
+        # Right subplot: Posterior distribution
+        ax_posterior = axes[i, 1]
+        
+        # Flatten all chains for posterior
+        param_flat = param_values.flatten()
+        
+        # Create histogram
+        ax_posterior.hist(param_flat, bins=50, density=True, alpha=0.6, color=color, edgecolor='black')
+        
+        # Add summary statistics
+        mean_val = np.mean(param_flat)
+        median_val = np.median(param_flat)
+        q025 = np.percentile(param_flat, 2.5)
+        q975 = np.percentile(param_flat, 97.5)
+        
+        # Add vertical lines for summary stats
+        ax_posterior.axvline(mean_val, color='red', linestyle='-', alpha=0.8, label='Mean')
+        ax_posterior.axvline(median_val, color='black', linestyle='--', alpha=0.8, label='Median')
+        ax_posterior.axvline(q025, color='gray', linestyle=':', alpha=0.6, label='95% CI')
+        ax_posterior.axvline(q975, color='gray', linestyle=':', alpha=0.6)
+        
+        ax_posterior.set_title(f'{param_label} - Posterior Distribution', fontsize=10, fontweight='bold')
+        ax_posterior.set_xlabel('Value')
+        ax_posterior.set_ylabel('Density')
+        ax_posterior.grid(True, alpha=0.3)
+        if i == 0:  # Only show legend for first parameter
+            ax_posterior.legend(fontsize=8)
+        
+        # Add text box with summary statistics
+        stats_text = f'Mean: {mean_val:.3f}\nMedian: {median_val:.3f}\n95% CI: [{q025:.3f}, {q975:.3f}]'
+        ax_posterior.text(0.02, 0.98, stats_text, transform=ax_posterior.transAxes, 
+                         verticalalignment='top', bbox=dict(boxstyle='round', facecolor='white', alpha=0.8),
+                         fontsize=8)
+    
+    plt.suptitle('Model Parameter Sampling Diagnostics', fontsize=14, fontweight='bold', y=0.98)
+    plt.tight_layout(rect=[0, 0, 1, 0.96])  # Leave space for suptitle
+    plt.savefig(output_file, dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    print(f"Parameter samples plot saved to: {output_file}")
+
+
+def plot_parameter_summary_table(idata, config: Config, output_file: str):
+    """Create a summary table of all parameters with key statistics."""
+    
+    # Get all scalar parameters (exclude multi-dimensional random effects)
+    scalar_params = []
+    for var_name in idata.posterior.data_vars:
+        var_data = idata.posterior[var_name]
+        # Include only scalar parameters or first element of vector parameters
+        if var_data.ndim <= 2:  # (chain, draw)
+            scalar_params.append(var_name)
+        elif var_data.ndim == 3 and var_name == 'beta':  # Special case for beta coefficients
+            # Add each beta coefficient separately
+            n_betas = var_data.shape[2]
+            for j in range(n_betas):
+                scalar_params.append(f'beta[{j}]')
+    
+    # Calculate summary statistics
+    stats_data = []
+    for param in scalar_params:
+        if '[' in param:  # Handle indexed parameters like beta[0]
+            base_param = param.split('[')[0]
+            idx = int(param.split('[')[1].split(']')[0])
+            values = idata.posterior[base_param].values[:, :, idx].flatten()
+        else:
+            values = idata.posterior[param].values.flatten()
+        
+        stats_data.append({
+            'Parameter': param,
+            'Mean': np.mean(values),
+            'Std': np.std(values),
+            'Median': np.median(values),
+            '2.5%': np.percentile(values, 2.5),
+            '97.5%': np.percentile(values, 97.5),
+            'R-hat': float(az.rhat(idata.posterior[param.split('[')[0]] if '[' in param else idata.posterior[param]).values.flatten()[0]) if len(values) > 4 else np.nan
+        })
+    
+    # Create table plot
+    fig, ax = plt.subplots(figsize=(12, len(stats_data) * 0.4 + 1))
+    ax.axis('tight')
+    ax.axis('off')
+    
+    # Convert to DataFrame for easier table creation
+    import pandas as pd
+    df_stats = pd.DataFrame(stats_data)
+    
+    # Format numbers for display
+    for col in ['Mean', 'Std', 'Median', '2.5%', '97.5%']:
+        df_stats[col] = df_stats[col].apply(lambda x: f'{x:.3f}')
+    df_stats['R-hat'] = df_stats['R-hat'].apply(lambda x: f'{x:.3f}' if not np.isnan(x) else 'N/A')
+    
+    # Create table
+    table = ax.table(cellText=df_stats.values, colLabels=df_stats.columns, 
+                    cellLoc='center', loc='center', bbox=[0, 0, 1, 1])
+    
+    # Style the table
+    table.auto_set_font_size(False)
+    table.set_fontsize(10)
+    table.scale(1, 2)
+    
+    # Header styling
+    for i in range(len(df_stats.columns)):
+        table[(0, i)].set_facecolor('#4CAF50')
+        table[(0, i)].set_text_props(weight='bold', color='white')
+    
+    # Alternate row colors
+    for i in range(1, len(df_stats) + 1):
+        color = '#f0f0f0' if i % 2 == 0 else 'white'
+        for j in range(len(df_stats.columns)):
+            table[(i, j)].set_facecolor(color)
+    
+    plt.title('Model Parameter Summary Statistics', fontsize=14, fontweight='bold', pad=20)
+    plt.savefig(output_file, dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    print(f"Parameter summary table saved to: {output_file}")
 
 
 app = cyclopts.App()
