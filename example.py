@@ -25,8 +25,8 @@ import arviz as az
 class Config(pydantic.BaseModel):
     covariate_names: list[str] = ['rainfall', 'mean_temperature']
     horizon: int = 3
-    tune: int = 100
-    draws: int = 100
+    tune: int = 1000
+    draws: int = 1000
     chains: int = 2
     seed: int = 42
     freq: str = "MS"  # Monthly start frequency
@@ -38,6 +38,9 @@ class Config(pydantic.BaseModel):
     seasonal_periods: int = 12  # 12 months in a year
     seasonal_sigma_base: float = 1.0  # Prior std for base seasonal effect
     seasonal_sigma_loc: float = 0.5   # Prior std for location-specific seasonal effects
+    # Location random effect parameters
+    use_location_effects: bool = False
+    location_sigma: float = 1.0  # Prior std for location random effects
 
 def complete_monthly_panel(df, date_col, loc_col, cols, freq="MS"):
     df = df.copy()
@@ -403,6 +406,17 @@ def on_train(training_data: pd.DataFrame, args: Config= Config()) -> tuple:
             # Total seasonal effect = base + location-specific
             seasonal_effects = seasonal_base_mapped[:, None] + seasonal_loc_mapped
 
+        # ----- Location random effects (IID) -----
+        location_effects = pt.zeros((T, L))
+        if args.use_location_effects:
+            # IID location random effects - constant across time for each location
+            location_sigma = pm.HalfNormal("location_sigma", args.location_sigma)
+            location_raw = pm.Normal("location_raw", 0.0, location_sigma, shape=L)
+            # Apply zero-sum constraint to make it identifiable
+            location_centered = location_raw - pt.mean(location_raw)
+            # Broadcast to (T, L) - same effect for each location across all time periods
+            location_effects = pt.tile(location_centered[None, :], (T, 1))
+
         # ----- AR(1) process using PyMC's built-in AR distribution -----
         rho = pm.Uniform("rho", lower=-0.99, upper=0.99)
         sigma_u = pm.HalfNormal("sigma_u", 1.0)
@@ -414,7 +428,7 @@ def on_train(training_data: pd.DataFrame, args: Config= Config()) -> tuple:
         # ----- Observation model: Negative Binomial -----
         alpha = pm.HalfNormal("alpha", 1.0)
         # Add population offset to the linear predictor before exponentiating
-        log_mu_past = linpast + seasonal_effects + u_seq + pt.as_tensor_variable(log_pop_offset_const)
+        log_mu_past = linpast + seasonal_effects + location_effects + u_seq + pt.as_tensor_variable(log_pop_offset_const)
         mu_past = pt.exp(log_mu_past)
         y_like = pm.NegativeBinomial("y", mu=mu_past, alpha=alpha, observed=y_const)
 
@@ -497,6 +511,16 @@ def on_predict(model_and_data: tuple, historic_data: pd.DataFrame, args: Config=
             # Total seasonal effect = base + location-specific
             seasonal_effects_fut = pt.as_tensor_variable(seasonal_base_fut)[:, None] + pt.as_tensor_variable(seasonal_loc_fut)
 
+        # Location effects for future periods
+        location_effects_fut = pt.zeros((H, L))
+        if args.use_location_effects:
+            # Get location parameters from posterior
+            location_val = idata.posterior["location_raw"].mean(dim=["chain", "draw"]).values
+            location_val = location_val - np.mean(location_val)  # Apply zero-sum constraint
+            
+            # Location effects are constant across time, so broadcast to (H, L)
+            location_effects_fut = pt.as_tensor_variable(np.tile(location_val[None, :], (H, 1)))
+
         # Continue AR(1) process from training through historic period to get final state
         u_ar_extended = continue_ar_process(idata, T_orig, T_extended, sigma_u_val, rho_val, L)
 
@@ -517,7 +541,7 @@ def on_predict(model_and_data: tuple, historic_data: pd.DataFrame, args: Config=
         u_fut_seq = pt.stack(u_fut[1:], axis=0)  # (H, L)
 
         # Add population offset to future predictions
-        log_mu_future = linfut + seasonal_effects_fut + u_fut_seq + pt.as_tensor_variable(log_pop_offset_future)
+        log_mu_future = linfut + seasonal_effects_fut + location_effects_fut + u_fut_seq + pt.as_tensor_variable(log_pop_offset_future)
         mu_future = pt.exp(log_mu_future)
         y_fut = pm.NegativeBinomial(f"y_fut_{unique_id}", mu=mu_future, alpha=alpha_val)
 

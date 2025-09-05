@@ -58,6 +58,14 @@ user_options:
     default: 0.5
     title: Location Seasonal Effect Sigma
     type: number
+  use_location_effects:
+    default: false
+    title: Use Location Random Effects
+    type: boolean
+  location_sigma:
+    default: 1.0
+    title: Location Random Effect Sigma
+    type: number
 
 entry_points:
   train:
