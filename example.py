@@ -74,7 +74,14 @@ def extract_month_indices(time_idx):
 def prepare_data(args: Config, raw):
     """Prepare and preprocess data for training."""
 
+    # Add population to required columns if available
+    available_cols = raw.columns.tolist()
     keep_cols = [args.target_col] + args.covariate_names
+    has_population = 'population' in available_cols
+    if has_population:
+        keep_cols.append('population')
+    else:
+        print("Warning: Population column not found. Model will run without population offset.")
     panel, time_idx, locs = complete_monthly_panel(raw, args.date_col, args.loc_col, keep_cols, freq=args.freq)
     T, L, H = len(time_idx), len(locs), args.horizon
 
@@ -83,6 +90,17 @@ def prepare_data(args: Config, raw):
     #if np.isnan(y).any():
     #    y = safe_impute(y)
     y = np.clip(y, 0, None).astype(int)
+    
+    # Population (T, L) for offset - only if available
+    if has_population:
+        pop = to_tensor_panels(panel, time_idx, locs, 'time_period', 'location', 'population')
+        # Forward fill any missing population values
+        if np.isnan(pop).any():
+            pop = safe_impute(pop)
+        log_pop_offset = np.log(np.clip(pop, 1.0, None))  # Ensure positive population
+    else:
+        # Create zero offset if no population data (equivalent to no offset)
+        log_pop_offset = np.zeros((T, L))
 
     # Covariates (optional) -> standardize
     feat_names = args.covariate_names
@@ -106,7 +124,8 @@ def prepare_data(args: Config, raw):
         'L': L,
         'P': P,
         'H': H,
-        'month_indices': month_indices
+        'month_indices': month_indices,
+        'log_pop_offset': log_pop_offset
     }
 
 
@@ -169,7 +188,9 @@ def prepare_extended_data(data_dict, historic_data, args):
             **data_dict,
             'T_extended': T_orig,
             'X_extended': data_dict['X_std'],
-            'extended_time_idx': original_time_idx
+            'extended_time_idx': original_time_idx,
+            'extended_month_indices': [],
+            'log_pop_offset_extended': []
         }
     
     # Create extended time index
@@ -179,7 +200,11 @@ def prepare_extended_data(data_dict, historic_data, args):
     extended_time_idx = original_time_idx.union(extended_periods).sort_values()
     
     # Process extended historic data similar to training data
+    available_cols = extended_historic.columns.tolist()
     keep_cols = [args.target_col] + args.covariate_names
+    has_population = 'population' in available_cols
+    if has_population:
+        keep_cols.append('population')
     extended_panel, _, extended_locs = complete_monthly_panel(
         extended_historic, args.date_col, args.loc_col, keep_cols, freq=args.freq
     )
@@ -188,12 +213,12 @@ def prepare_extended_data(data_dict, historic_data, args):
     if set(extended_locs) != set(original_locs):
         print(f"Warning: Location mismatch. Original: {set(original_locs)}, Extended: {set(extended_locs)}")
     
-    # Extract extended covariates for the new period only
+    # Extract extended covariates and population for the new period only
+    extended_start_idx = len(original_time_idx) 
+    extended_end_idx = len(extended_time_idx)
+    
     if P > 0:
         # Get covariate data for the extended period
-        extended_start_idx = len(original_time_idx) 
-        extended_end_idx = len(extended_time_idx)
-        
         X_extended_new = []
         for col in args.covariate_names:
             X_col = to_tensor_panels(extended_panel, extended_time_idx, original_locs, 
@@ -212,6 +237,22 @@ def prepare_extended_data(data_dict, historic_data, args):
     else:
         X_extended = None
     
+    # Handle population data for the extended period
+    if has_population and extended_start_idx < extended_end_idx:
+        # Get population data for the extended period
+        pop_extended = to_tensor_panels(extended_panel, extended_time_idx, original_locs, 
+                                      args.date_col, args.loc_col, 'population')
+        # Forward fill any missing population values
+        if np.isnan(pop_extended).any():
+            pop_extended = safe_impute(pop_extended)
+        log_pop_offset_extended = np.log(np.clip(pop_extended, 1.0, None))
+    elif has_population:
+        # No extension, use original population data
+        log_pop_offset_extended = data_dict['log_pop_offset']
+    else:
+        # No population data available - create zero offset for extended period
+        log_pop_offset_extended = np.zeros((len(extended_time_idx), L))
+    
     # Extract month indices for seasonal effects (extended period)
     extended_month_indices = extract_month_indices(extended_time_idx) if args.use_seasonal_effects else None
     
@@ -220,7 +261,8 @@ def prepare_extended_data(data_dict, historic_data, args):
         'T_extended': len(extended_time_idx),
         'X_extended': X_extended,
         'extended_time_idx': extended_time_idx,
-        'extended_month_indices': extended_month_indices
+        'extended_month_indices': extended_month_indices,
+        'log_pop_offset_extended': log_pop_offset_extended
     }
 
 def continue_ar_process(idata, T_orig, T_extended, sigma_u_val, rho_val, L):
@@ -311,11 +353,13 @@ def on_train(training_data: pd.DataFrame, args: Config= Config()) -> tuple:
     """Train the PyMC model and return fitted model with inference data."""
     y = data_dict["y"]
     X_std = data_dict["X_std"]
+    log_pop_offset = data_dict["log_pop_offset"]
     T, L, P, H = data_dict["T"], data_dict["L"], data_dict["P"], data_dict["H"]
 
     # Convert constants to graph tensors
     y_const = y
     Xpast_const = X_std if P else None
+    log_pop_offset_const = log_pop_offset
     month_indices = data_dict["month_indices"]
 
     with pm.Model() as model:
@@ -368,7 +412,9 @@ def on_train(training_data: pd.DataFrame, args: Config= Config()) -> tuple:
 
         # ----- Observation model: Negative Binomial -----
         alpha = pm.HalfNormal("alpha", 1.0)
-        mu_past = pt.exp(linpast + seasonal_effects + u_seq)
+        # Add population offset to the linear predictor before exponentiating
+        log_mu_past = linpast + seasonal_effects + u_seq + pt.as_tensor_variable(log_pop_offset_const)
+        mu_past = pt.exp(log_mu_past)
         y_like = pm.NegativeBinomial("y", mu=mu_past, alpha=alpha, observed=y_const)
 
         idata = pm.sample(
@@ -396,11 +442,16 @@ def on_predict(model_and_data: tuple, historic_data: pd.DataFrame, args: Config=
     
     # Prepare future covariates by holding last value from historic data
     X_extended = extended_data_dict["X_extended"]
+    log_pop_offset_extended = extended_data_dict["log_pop_offset_extended"]
+    
     if P > 0:
         X_future = np.tile(X_extended[-1:, :, :], (H, 1, 1))  # hold last from historic data
         Xfut_const = X_future
     else:
         Xfut_const = None
+    
+    # Prepare future population offset by holding last value from historic data
+    log_pop_offset_future = np.tile(log_pop_offset_extended[-1:, :], (H, 1))  # (H, L)
 
     # Create a new model for prediction to avoid variable name conflicts
     with pm.Model() as pred_model:
@@ -464,7 +515,9 @@ def on_predict(model_and_data: tuple, historic_data: pd.DataFrame, args: Config=
         # Stack future AR values (skip initial value)
         u_fut_seq = pt.stack(u_fut[1:], axis=0)  # (H, L)
 
-        mu_future = pt.exp(linfut + seasonal_effects_fut + u_fut_seq)
+        # Add population offset to future predictions
+        log_mu_future = linfut + seasonal_effects_fut + u_fut_seq + pt.as_tensor_variable(log_pop_offset_future)
+        mu_future = pt.exp(log_mu_future)
         y_fut = pm.NegativeBinomial(f"y_fut_{unique_id}", mu=mu_future, alpha=alpha_val)
 
         # Sample from the prediction model
@@ -555,9 +608,9 @@ class FileSet(pydantic.BaseModel):
 
 def test():
     fileset = FileSet(
-        train_data='test_data2/training_data.csv',
-        historic_data='test_data2/historic_data.csv',
-        future_data='test_data2/future_data.csv',
+        train_data='test_data/training_data.csv',
+        historic_data='test_data/historic_data.csv',
+        future_data='test_data/future_data.csv',
     )
     config_filename = 'real_config.yaml'
     train(fileset.train_data,
