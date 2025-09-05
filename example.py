@@ -11,6 +11,7 @@ import pickle
 import json
 from _ast import arg
 
+import pytest
 import yaml
 import numpy as np
 import pandas as pd
@@ -87,7 +88,7 @@ def prepare_data(args: Config, raw):
 
     # Target (T, L)
     y = to_tensor_panels(panel, time_idx, locs, 'time_period', 'location', 'disease_cases')
-    #if np.isnan(y).any():
+    # if np.isnan(y).any():
     #    y = safe_impute(y)
     y = np.clip(y, 0, None).astype(int)
     
@@ -189,8 +190,8 @@ def prepare_extended_data(data_dict, historic_data, args):
             'T_extended': T_orig,
             'X_extended': data_dict['X_std'],
             'extended_time_idx': original_time_idx,
-            'extended_month_indices': [],
-            'log_pop_offset_extended': []
+            'extended_month_indices': data_dict['month_indices'],
+            'log_pop_offset_extended': data_dict['log_pop_offset']
         }
     
     # Create extended time index
@@ -606,11 +607,12 @@ class FileSet(pydantic.BaseModel):
     future_data: str
 
 
-def test():
+@pytest.mark.parametrize("folder_name", ['test_data', 'test_data2'])
+def test(folder_name):
     fileset = FileSet(
-        train_data='test_data/training_data.csv',
-        historic_data='test_data/historic_data.csv',
-        future_data='test_data/future_data.csv',
+        train_data=('%s/training_data.csv' % folder_name),
+        historic_data=('%s/historic_data.csv' % folder_name),
+        future_data=('%s/future_data.csv' % folder_name),
     )
     config_filename = 'real_config.yaml'
     train(fileset.train_data,
