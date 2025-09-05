@@ -1,9 +1,12 @@
 # pymc_st_arf_model_nomutable.py
-# Temporal PyMC model with AR(1) in time and independent location effects.
+# Temporal PyMC model with Random Walk in time and independent location effects.
 # No pm.MutableData / pm.Data usage — just plain NumPy constants.
 #
 # Usage:
-#   python pymc_st_arf_model_nomutable.py --csv your_file.csv
+#   python example.py train training_data.csv model.pkl config.yaml
+#   python example.py predict model.pkl historic_data.csv future_data.csv predictions.csv config.yaml
+#   python example.py plot model.pkl training_data.csv historic_data.csv predictions.csv config.yaml output.png
+#   python example.py plot-components model.pkl config.yaml output_dir
 
 import argparse
 import uuid
@@ -21,12 +24,14 @@ import pymc as pm
 import pytensor.tensor as pt
 import cyclopts
 import arviz as az
+import matplotlib.pyplot as plt
+import seaborn as sns
 
 class Config(pydantic.BaseModel):
     covariate_names: list[str] = ['rainfall', 'mean_temperature']
     horizon: int = 3
-    tune: int = 1000
-    draws: int = 1000
+    tune: int = 100
+    draws: int = 100
     chains: int = 2
     seed: int = 42
     freq: str = "MS"  # Monthly start frequency
@@ -39,7 +44,7 @@ class Config(pydantic.BaseModel):
     seasonal_sigma_base: float = 1.0  # Prior std for base seasonal effect
     seasonal_sigma_loc: float = 0.5   # Prior std for location-specific seasonal effects
     # Location random effect parameters
-    use_location_effects: bool = False
+    use_location_effects: bool = True
     location_sigma: float = 1.0  # Prior std for location random effects
 
 def complete_monthly_panel(df, date_col, loc_col, cols, freq="MS"):
@@ -98,6 +103,7 @@ def prepare_data(args: Config, raw):
     # Population (T, L) for offset - only if available
     if has_population:
         pop = to_tensor_panels(panel, time_idx, locs, 'time_period', 'location', 'population')
+
         # Forward fill any missing population values
         if np.isnan(pop).any():
             pop = safe_impute(pop)
@@ -269,38 +275,36 @@ def prepare_extended_data(data_dict, historic_data, args):
         'log_pop_offset_extended': log_pop_offset_extended
     }
 
-def continue_ar_process(idata, T_orig, T_extended, sigma_u_val, rho_val, L):
-    """Continue AR(1) process from training end through historic period."""
+def continue_rw_process(idata, T_orig, T_extended, sigma_rw_val, L):
+    """Continue Random Walk process from training end through historic period."""
     if T_extended <= T_orig:
         # No extension needed
-        u_ar_last = (
-            idata.posterior["u_ar"]
-            .isel(u_ar_dim_0=-1)
+        u_rw_last = (
+            idata.posterior["u_rw"]
+            .isel(u_rw_dim_0=-1)
             .mean(dim=["chain", "draw"])
             .values
         )
-        return pt.as_tensor_variable(u_ar_last)
+        return pt.as_tensor_variable(u_rw_last)
     
     # Get starting point from training
-    u_ar_last = (
-        idata.posterior["u_ar"]
-        .isel(u_ar_dim_0=-1)
+    u_rw_last = (
+        idata.posterior["u_rw"]
+        .isel(u_rw_dim_0=-1)
         .mean(dim=["chain", "draw"])
         .values
     )
     
-    # Continue AR process for the extended period
+    # Continue Random Walk for the extended period
     steps_to_continue = T_extended - T_orig
-    u_current = pt.as_tensor_variable(u_ar_last)
+    u_current = pt.as_tensor_variable(u_rw_last)
     
-    # Generate AR steps for the historic extension period
-    # Note: We're using the mean behavior here, not sampling noise
+    # Generate Random Walk steps for the historic extension period
+    # Random walk: u_t = u_{t-1} + noise_t
     for step in range(steps_to_continue):
-        # For deterministic continuation, we could omit noise, but let's include it
-        # to maintain stochastic behavior
         unique_id = str(uuid.uuid4())[:8]
-        noise = pm.Normal(f"historic_noise_{unique_id}_{step}", 0.0, sigma_u_val, shape=(L,))
-        u_current = rho_val * u_current + noise
+        noise = pm.Normal(f"historic_noise_{unique_id}_{step}", 0.0, sigma_rw_val, shape=(L,))
+        u_current = u_current + noise
     
     return u_current
 
@@ -380,8 +384,10 @@ def on_train(training_data: pd.DataFrame, args: Config= Config()) -> tuple:
         # ----- Seasonal effects (if enabled) -----
         seasonal_effects = pt.zeros((T, L))
         if args.use_seasonal_effects:
+
             # Base seasonal effect with cyclical random walk
-            seasonal_sigma_base = pm.HalfNormal("seasonal_sigma_base", args.seasonal_sigma_base)
+            seasonal_sigma_base = pm.HalfNormal("seasonal_sigma_base",
+                                                args.seasonal_sigma_base)
             
             # Create cyclical random walk for base seasonal effect (12 months)
             # Use a random walk with wrap-around constraint
@@ -417,13 +423,14 @@ def on_train(training_data: pd.DataFrame, args: Config= Config()) -> tuple:
             # Broadcast to (T, L) - same effect for each location across all time periods
             location_effects = pt.tile(location_centered[None, :], (T, 1))
 
-        # ----- AR(1) process using PyMC's built-in AR distribution -----
-        rho = pm.Uniform("rho", lower=-0.99, upper=0.99)
-        sigma_u = pm.HalfNormal("sigma_u", 1.0)
+        # ----- Random Walk process for each location -----
+        sigma_rw = pm.HalfNormal("sigma_rw", 1.0)
 
-        # AR(1) process for each location independently
-        # pm.AR expects shape (T, L) and creates an AR process along the time dimension
-        u_seq = pm.AR("u_ar", rho=rho, sigma=sigma_u, shape=(T, L))
+        # Random walk process for each location independently
+        # GaussianRandomWalk creates a random walk along the time dimension
+        u_seq = pm.GaussianRandomWalk("u_rw",
+                                      sigma=sigma_rw,
+                                      shape=(T, L))
 
         # ----- Observation model: Negative Binomial -----
         alpha = pm.HalfNormal("alpha", 1.0)
@@ -444,7 +451,7 @@ def on_train(training_data: pd.DataFrame, args: Config= Config()) -> tuple:
     return (model, idata, data_dict, args)
 
 def on_predict(model_and_data: tuple, historic_data: pd.DataFrame, args: Config= Config()) -> pd.DataFrame:
-    '''Use trained model parameters to predict from the end of historic_data'''
+    '''Use trained model parameters to predic t from the end of historic_data'''
     # Unpack the training results
     model, idata, data_dict, args = model_and_data
     
@@ -464,7 +471,7 @@ def on_predict(model_and_data: tuple, historic_data: pd.DataFrame, args: Config=
         Xfut_const = X_future
     else:
         Xfut_const = None
-    
+
     # Prepare future population offset by holding last value from historic data
     log_pop_offset_future = np.tile(log_pop_offset_extended[-1:, :], (H, 1))  # (H, L)
 
@@ -472,8 +479,7 @@ def on_predict(model_and_data: tuple, historic_data: pd.DataFrame, args: Config=
     with pm.Model() as pred_model:
         # Get parameter values from posterior
         intercept_val = idata.posterior["intercept"].mean(dim=["chain", "draw"]).values
-        sigma_u_val = idata.posterior["sigma_u"].mean(dim=["chain", "draw"]).values
-        rho_val = idata.posterior["rho"].mean(dim=["chain", "draw"]).values
+        sigma_rw_val = idata.posterior["sigma_rw"].mean(dim=["chain", "draw"]).values
         alpha_val = idata.posterior["alpha"].mean(dim=["chain", "draw"]).values
 
         # Fixed effects for future periods
@@ -521,23 +527,23 @@ def on_predict(model_and_data: tuple, historic_data: pd.DataFrame, args: Config=
             # Location effects are constant across time, so broadcast to (H, L)
             location_effects_fut = pt.as_tensor_variable(np.tile(location_val[None, :], (H, 1)))
 
-        # Continue AR(1) process from training through historic period to get final state
-        u_ar_extended = continue_ar_process(idata, T_orig, T_extended, sigma_u_val, rho_val, L)
+        # Continue Random Walk from training through historic period to get final state
+        u_rw_extended = continue_rw_process(idata, T_orig, T_extended, sigma_rw_val, L)
 
-        # Create future AR process starting from end of historic period
+        # Create future Random Walk starting from end of historic period
         unique_id = str(uuid.uuid4())[:8]
 
-        # For prediction, we'll use a simple AR(1) continuation
+        # For prediction, we'll use a simple Random Walk continuation
         # Initialize with last state after processing historic data
-        u_fut = [u_ar_extended]
+        u_fut = [u_rw_extended]
 
         # Generate H future steps
         for h in range(H):
-            noise = pm.Normal(f"noise_{unique_id}_{h}", 0.0, sigma_u_val, shape=(L,))
-            next_u = rho_val * u_fut[-1] + noise
+            noise = pm.Normal(f"noise_{unique_id}_{h}", 0.0, sigma_rw_val, shape=(L,))
+            next_u = u_fut[-1] + noise  # Random walk: u_t = u_{t-1} + noise_t
             u_fut.append(next_u)
 
-        # Stack future AR values (skip initial value)
+        # Stack future Random Walk values (skip initial value)
         u_fut_seq = pt.stack(u_fut[1:], axis=0)  # (H, L)
 
         # Add population offset to future predictions
@@ -554,6 +560,342 @@ def on_predict(model_and_data: tuple, historic_data: pd.DataFrame, args: Config=
     result_df = format_predictions_from_historic_end(ppc, extended_data_dict, args)
     
     return result_df
+
+
+def create_model_visualization(train_data_file: str, historic_data_file: str, 
+                             predictions_file: str, output_file: str, 
+                             config: Config):
+    """Create comprehensive visualization of model training data, historic data, and predictions."""
+    
+    # Load all datasets
+    train_df = pd.read_csv(train_data_file)
+    historic_df = pd.read_csv(historic_data_file)
+    pred_df = pd.read_csv(predictions_file)
+    
+    # Convert time periods to datetime
+    train_df['time_period'] = pd.to_datetime(train_df['time_period'])
+    historic_df['time_period'] = pd.to_datetime(historic_df['time_period'])
+    pred_df['time_period'] = pd.to_datetime(pred_df['time_period'])
+    
+    # Get all locations
+    locations = sorted(train_df['location'].unique())
+    n_locs = len(locations)
+    
+    # Set up the plot
+    fig, axes = plt.subplots(n_locs, 1, figsize=(15, 4 * n_locs))
+    if n_locs == 1:
+        axes = [axes]
+    
+    # Calculate prediction statistics
+    sample_cols = [col for col in pred_df.columns if col.startswith('sample_')]
+    pred_df['pred_mean'] = pred_df[sample_cols].mean(axis=1)
+    pred_df['pred_std'] = pred_df[sample_cols].std(axis=1)
+    pred_df['pred_lower'] = pred_df[sample_cols].quantile(0.025, axis=1)
+    pred_df['pred_upper'] = pred_df[sample_cols].quantile(0.975, axis=1)
+    
+    for i, location in enumerate(locations):
+        ax = axes[i]
+        
+        # Filter data for this location
+        train_loc = train_df[train_df['location'] == location].copy()
+        historic_loc = historic_df[historic_df['location'] == location].copy()
+        pred_loc = pred_df[pred_df['location'] == location].copy()
+        
+        # Sort by time
+        train_loc = train_loc.sort_values('time_period')
+        historic_loc = historic_loc.sort_values('time_period')
+        pred_loc = pred_loc.sort_values('time_period')
+        
+        # Plot training data
+        ax.plot(train_loc['time_period'], train_loc['disease_cases'], 
+                'o-', color='blue', alpha=0.7, label='Training Data', markersize=4)
+        
+        # Plot historic data (if different from training)
+        if len(historic_loc) > 0:
+            # Only plot historic data that's not already in training
+            train_periods = set(train_loc['time_period'])
+            historic_new = historic_loc[~historic_loc['time_period'].isin(train_periods)]
+            if len(historic_new) > 0:
+                ax.plot(historic_new['time_period'], historic_new['disease_cases'],
+                        's-', color='green', alpha=0.7, label='Historic Data', markersize=4)
+        
+        # Plot predictions with uncertainty
+        if len(pred_loc) > 0:
+            # Prediction mean
+            ax.plot(pred_loc['time_period'], pred_loc['pred_mean'],
+                    'D-', color='red', alpha=0.8, label='Predicted Mean', markersize=5)
+            
+            # Prediction uncertainty
+            ax.fill_between(pred_loc['time_period'],
+                          pred_loc['pred_lower'],
+                          pred_loc['pred_upper'],
+                          alpha=0.3, color='red', label='95% Prediction Interval')
+        
+        # Formatting
+        ax.set_title(f'Disease Cases - {location}', fontsize=12, fontweight='bold')
+        ax.set_xlabel('Time Period')
+        ax.set_ylabel('Disease Cases')
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+        
+        # Format x-axis dates
+        ax.tick_params(axis='x', rotation=45)
+        
+        # Set y-axis to start from 0 for better comparison
+        ax.set_ylim(bottom=0)
+    
+    plt.tight_layout()
+    plt.savefig(output_file, dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    print(f"Visualization saved to: {output_file}")
+
+
+def create_parameter_plot(model_file: str, output_file: str, config: Config):
+    """Create visualization of model parameters from posterior."""
+    
+    # Load model data
+    base_name = model_file.rsplit('.', 1)[0] if '.' in model_file else model_file
+    idata_filename = f"{base_name}_idata.nc"
+    
+    try:
+        idata = az.from_netcdf(idata_filename)
+    except FileNotFoundError:
+        print(f"Could not find inference data file: {idata_filename}")
+        return
+    
+    # Create parameter plots
+    fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+    axes = axes.flatten()
+    
+    # Plot 1: Random Walk variance
+    if 'sigma_rw' in idata.posterior:
+        az.plot_posterior(idata.posterior['sigma_rw'], ax=axes[0])
+        axes[0].set_title('Random Walk Variance (σ_rw)')
+    
+    # Plot 2: Overdispersion parameter
+    if 'alpha' in idata.posterior:
+        az.plot_posterior(idata.posterior['alpha'], ax=axes[1])
+        axes[1].set_title('Negative Binomial Overdispersion (α)')
+    
+    # Plot 3: Seasonal effects (if enabled)
+    if config.use_seasonal_effects and 'seasonal_sigma_base' in idata.posterior:
+        az.plot_posterior(idata.posterior['seasonal_sigma_base'], ax=axes[2])
+        axes[2].set_title('Base Seasonal Effect Variance')
+    else:
+        axes[2].text(0.5, 0.5, 'Seasonal Effects\nDisabled', 
+                    ha='center', va='center', transform=axes[2].transAxes)
+        axes[2].set_title('Seasonal Effects')
+    
+    # Plot 4: Location effects (if enabled)
+    if config.use_location_effects and 'location_sigma' in idata.posterior:
+        az.plot_posterior(idata.posterior['location_sigma'], ax=axes[3])
+        axes[3].set_title('Location Effect Variance')
+    else:
+        axes[3].text(0.5, 0.5, 'Location Effects\nDisabled', 
+                    ha='center', va='center', transform=axes[3].transAxes)
+        axes[3].set_title('Location Effects')
+    
+    plt.tight_layout()
+    plt.savefig(output_file, dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    print(f"Parameter visualization saved to: {output_file}")
+
+
+def plot_model_components(model_file: str, output_dir: str, config: Config):
+    """Create specialized plots of model components from posterior samples."""
+    
+    # Load model data
+    base_name = model_file.rsplit('.', 1)[0] if '.' in model_file else model_file
+    idata_filename = f"{base_name}_idata.nc"
+    data_filename = f"{base_name}_data.pkl"
+    
+    try:
+        idata = az.from_netcdf(idata_filename)
+        with open(data_filename, 'rb') as f:
+            data_dict, _ = pickle.load(f)
+    except FileNotFoundError as e:
+        print(f"Could not find model files: {e}")
+        return
+    
+    # Get location names
+    locations = data_dict['locs']
+    
+    # Create output directory if it doesn't exist
+    import os
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # 1. Plot seasonal effects with 90% CI for each location
+    if config.use_seasonal_effects and 'seasonal_base_raw' in idata.posterior:
+        plot_seasonal_effects(idata, locations, config, f"{output_dir}/seasonal_effects.png")
+    
+    # 2. Plot random walk variance posterior
+    if 'sigma_rw' in idata.posterior:
+        plot_rw_variance(idata, f"{output_dir}/rw_variance.png")
+    
+    # 3. Plot IID location effects (if enabled)
+    if config.use_location_effects and 'location_raw' in idata.posterior:
+        plot_location_effects(idata, locations, f"{output_dir}/location_effects.png")
+    
+    print(f"Model component plots saved to directory: {output_dir}")
+
+
+def plot_seasonal_effects(idata, locations, config: Config, output_file: str):
+    """Plot seasonal effects with 90% confidence intervals for each location."""
+    
+    # Extract seasonal components from posterior
+    seasonal_base_samples = idata.posterior['seasonal_base_raw'].values  # (chain, draw, seasonal_periods)
+    seasonal_loc_samples = idata.posterior['seasonal_loc_raw'].values   # (chain, draw, seasonal_periods, locations)
+    
+    # Flatten chain and draw dimensions
+    n_chains, n_draws = seasonal_base_samples.shape[:2]
+    seasonal_base_flat = seasonal_base_samples.reshape(n_chains * n_draws, -1)  # (samples, seasonal_periods)
+    seasonal_loc_flat = seasonal_loc_samples.reshape(n_chains * n_draws, config.seasonal_periods, len(locations))
+    
+    # Apply zero-sum constraints (as done in the model)
+    seasonal_base_centered = seasonal_base_flat - np.mean(seasonal_base_flat, axis=1, keepdims=True)
+    seasonal_loc_centered = seasonal_loc_flat - np.mean(seasonal_loc_flat, axis=1, keepdims=True)
+    
+    # Combine base + location-specific effects
+    total_seasonal = seasonal_base_centered[:, :, np.newaxis] + seasonal_loc_centered  # (samples, periods, locations)
+    
+    # Calculate statistics
+    seasonal_mean = np.mean(total_seasonal, axis=0)  # (periods, locations)
+    seasonal_q05 = np.percentile(total_seasonal, 5, axis=0)   # 90% CI lower
+    seasonal_q95 = np.percentile(total_seasonal, 95, axis=0)  # 90% CI upper
+    
+    # Create plot
+    n_locs = len(locations)
+    cols = min(3, n_locs)
+    rows = (n_locs + cols - 1) // cols
+    
+    fig, axes = plt.subplots(rows, cols, figsize=(15, 4 * rows))
+    if n_locs == 1:
+        axes = [axes]
+    elif rows == 1:
+        axes = axes if hasattr(axes, '__len__') else [axes]
+    else:
+        axes = axes.flatten()
+    
+    months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 
+              'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+    
+    for i, location in enumerate(locations):
+        if i < len(axes):
+            ax = axes[i]
+            
+            x = np.arange(config.seasonal_periods)
+            
+            # Plot mean seasonal effect
+            ax.plot(x, seasonal_mean[:, i], 'o-', color='blue', linewidth=2, 
+                   markersize=6, label='Mean Effect')
+            
+            # Plot 90% confidence interval
+            ax.fill_between(x, seasonal_q05[:, i], seasonal_q95[:, i], 
+                           alpha=0.3, color='blue', label='90% CI')
+            
+            ax.set_title(f'Seasonal Effect - {location}', fontsize=12, fontweight='bold')
+            ax.set_xlabel('Month')
+            ax.set_ylabel('Seasonal Effect')
+            ax.set_xticks(x)
+            ax.set_xticklabels(months[:config.seasonal_periods], rotation=45)
+            ax.grid(True, alpha=0.3)
+            ax.axhline(y=0, color='red', linestyle='--', alpha=0.5)
+            ax.legend()
+    
+    # Hide unused subplots
+    for j in range(n_locs, len(axes)):
+        axes[j].set_visible(False)
+    
+    plt.tight_layout()
+    plt.savefig(output_file, dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    print(f"Seasonal effects plot saved to: {output_file}")
+
+
+def plot_rw_variance(idata, output_file: str):
+    """Plot random walk variance posterior distribution."""
+    
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
+    
+    # Plot 1: Posterior distribution
+    az.plot_posterior(idata.posterior['sigma_rw'], ax=ax1, textsize=12)
+    ax1.set_title('Random Walk Variance (σ_rw)\nPosterior Distribution', fontsize=12, fontweight='bold')
+    
+    # Plot 2: Trace plot
+    sigma_rw_samples = idata.posterior['sigma_rw'].values
+    n_chains = sigma_rw_samples.shape[0]
+    
+    for chain in range(n_chains):
+        ax2.plot(sigma_rw_samples[chain, :], alpha=0.7, label=f'Chain {chain+1}')
+    
+    ax2.set_title('Random Walk Variance (σ_rw)\nTrace Plot', fontsize=12, fontweight='bold')
+    ax2.set_xlabel('Draw')
+    ax2.set_ylabel('σ_rw')
+    ax2.legend()
+    ax2.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    plt.savefig(output_file, dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    print(f"Random walk variance plot saved to: {output_file}")
+
+
+def plot_location_effects(idata, locations, output_file: str):
+    """Plot IID location effects with uncertainty."""
+    
+    # Extract location effects from posterior
+    location_samples = idata.posterior['location_raw'].values  # (chain, draw, locations)
+    
+    # Flatten chain and draw dimensions
+    n_chains, n_draws = location_samples.shape[:2]
+    location_flat = location_samples.reshape(n_chains * n_draws, -1)  # (samples, locations)
+    
+    # Apply zero-sum constraint (as done in the model)
+    location_centered = location_flat - np.mean(location_flat, axis=1, keepdims=True)
+    
+    # Calculate statistics
+    location_mean = np.mean(location_centered, axis=0)
+    location_q05 = np.percentile(location_centered, 5, axis=0)   # 90% CI lower
+    location_q95 = np.percentile(location_centered, 95, axis=0)  # 90% CI upper
+    
+    # Create plot
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
+    
+    # Plot 1: Location effects with error bars
+    x = np.arange(len(locations))
+    ax1.errorbar(x, location_mean, 
+                yerr=[location_mean - location_q05, location_q95 - location_mean],
+                fmt='o', capsize=5, capthick=2, markersize=8, linewidth=2)
+    
+    ax1.set_title('IID Location Effects\nwith 90% Confidence Intervals', fontsize=12, fontweight='bold')
+    ax1.set_xlabel('Location')
+    ax1.set_ylabel('Location Effect')
+    ax1.set_xticks(x)
+    ax1.set_xticklabels(locations, rotation=45)
+    ax1.grid(True, alpha=0.3)
+    ax1.axhline(y=0, color='red', linestyle='--', alpha=0.5)
+    
+    # Plot 2: Posterior distributions for each location
+    for i, location in enumerate(locations):
+        ax2.hist(location_centered[:, i], bins=50, alpha=0.6, 
+                label=location, density=True)
+    
+    ax2.set_title('Location Effects\nPosterior Distributions', fontsize=12, fontweight='bold')
+    ax2.set_xlabel('Location Effect Value')
+    ax2.set_ylabel('Density')
+    ax2.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+    ax2.grid(True, alpha=0.3)
+    ax2.axvline(x=0, color='red', linestyle='--', alpha=0.5)
+    
+    plt.tight_layout()
+    plt.savefig(output_file, dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    print(f"Location effects plot saved to: {output_file}")
 
 
 app = cyclopts.App()
@@ -625,6 +967,37 @@ def predict(model: str,
     print(f"Predictions saved to: {out_file}")
 
 
+@app.command()
+def plot(model: str, 
+         train_data: str, 
+         historic_data: str,
+         predictions: str,
+         model_config: str,
+         output: str = "model_visualization.png",
+         plot_params: bool = False):
+    """Create visualization of model training data, historic data, and predictions."""
+    
+    config = load_config(model_config)
+    
+    # Create main visualization
+    create_model_visualization(train_data, historic_data, predictions, output, config)
+    
+    # Optionally create parameter plots
+    if plot_params:
+        param_output = output.replace('.png', '_parameters.png')
+        create_parameter_plot(model, param_output, config)
+
+
+@app.command()
+def plot_components(model: str,
+                   model_config: str,
+                   output_dir: str = "model_components"):
+    """Create specialized plots of model components from posterior samples."""
+    
+    config = load_config(model_config)
+    plot_model_components(model, output_dir, config)
+
+
 class FileSet(pydantic.BaseModel):
     train_data: str
     historic_data: str
@@ -646,6 +1019,16 @@ def test(folder_name):
             fileset.future_data,
             'test_runs/forecast_samples.csv',
             config_filename)
+    
+    # Create visualization
+    plot('test_runs/model',
+         fileset.train_data,
+         fileset.historic_data,
+         'test_runs/forecast_samples.csv',
+         config_filename,
+         f'test_runs/visualization_{folder_name}.png',
+         plot_params=True)
+    
     df = pd.read_csv('test_runs/forecast_samples.csv')
 
     for colname in ['location', 'time_period', 'sample_0']:
