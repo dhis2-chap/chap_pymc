@@ -30,8 +30,8 @@ import seaborn as sns
 class Config(pydantic.BaseModel):
     covariate_names: list[str] = ['rainfall', 'mean_temperature']
     horizon: int = 3
-    tune: int = 100
-    draws: int = 100
+    tune: int = 200
+    draws: int = 200
     chains: int = 2
     seed: int = 42
     freq: str = "MS"  # Monthly start frequency
@@ -46,6 +46,13 @@ class Config(pydantic.BaseModel):
     # Location random effect parameters
     use_location_effects: bool = True
     location_sigma: float = 1.0  # Prior std for location random effects
+    # Sampling parameters to handle divergences
+    target_accept: float = 0.95  # Higher target_accept to reduce divergences
+    max_treedepth: int = 12  # Increased max tree depth
+    # Non-centered parameterization option
+    use_non_centered: bool = True  # Use non-centered parameterization for better sampling
+    # Regularization parameters
+    beta_prior_sigma: float = 0.5  # Stronger regularization for covariates to reduce correlation with seasonal effects
 
 def complete_monthly_panel(df, date_col, loc_col, cols, freq="MS"):
     df = df.copy()
@@ -374,7 +381,9 @@ def on_train(training_data: pd.DataFrame, args: Config= Config()) -> tuple:
         # ----- Fixed effects -----
         intercept = pm.Normal("intercept", 0.0, 5.0)
         if P:
-            beta = pm.Normal("beta", 0.0, 1.0, shape=P)
+            # Use stronger regularization if seasonal effects are enabled to reduce correlation
+            beta_sigma = args.beta_prior_sigma if args.use_seasonal_effects else 1.0
+            beta = pm.Normal("beta", 0.0, beta_sigma, shape=P)
             linpast = intercept + pt.tensordot(
                 pt.as_tensor_variable(Xpast_const), beta, axes=[2, 0]
             )
@@ -384,25 +393,36 @@ def on_train(training_data: pd.DataFrame, args: Config= Config()) -> tuple:
         # ----- Seasonal effects (if enabled) -----
         seasonal_effects = pt.zeros((T, L))
         if args.use_seasonal_effects:
-
-            # Base seasonal effect with cyclical random walk
-            seasonal_sigma_base = pm.HalfNormal("seasonal_sigma_base",
-                                                args.seasonal_sigma_base)
             
-            # Create cyclical random walk for base seasonal effect (12 months)
-            # Use a random walk with wrap-around constraint
-            seasonal_base_raw = pm.GaussianRandomWalk("seasonal_base_raw", 
-                                                     sigma=seasonal_sigma_base, 
-                                                     shape=args.seasonal_periods)
-            # Apply zero-sum constraint to make it identifiable
-            seasonal_base = seasonal_base_raw - pt.mean(seasonal_base_raw)
-            
-            # Location-specific seasonal effects (more regularized)
-            seasonal_sigma_loc = pm.HalfNormal("seasonal_sigma_loc", args.seasonal_sigma_loc)
-            seasonal_loc_raw = pm.Normal("seasonal_loc_raw", 0.0, seasonal_sigma_loc, 
-                                       shape=(args.seasonal_periods, L))
-            # Apply zero-sum constraint across months for each location
-            seasonal_loc = seasonal_loc_raw - pt.mean(seasonal_loc_raw, axis=0)
+            if args.use_non_centered:
+                # Non-centered parameterization for better sampling
+                seasonal_sigma_base = pm.HalfNormal("seasonal_sigma_base", args.seasonal_sigma_base)
+                
+                # Non-centered base seasonal effect
+                seasonal_base_raw_std = pm.GaussianRandomWalk("seasonal_base_raw_std", 
+                                                            sigma=1.0, 
+                                                            shape=args.seasonal_periods)
+                seasonal_base_raw = seasonal_base_raw_std * seasonal_sigma_base
+                seasonal_base = seasonal_base_raw - pt.mean(seasonal_base_raw)
+                
+                # Non-centered location-specific seasonal effects
+                seasonal_sigma_loc = pm.HalfNormal("seasonal_sigma_loc", args.seasonal_sigma_loc)
+                seasonal_loc_raw_std = pm.Normal("seasonal_loc_raw_std", 0.0, 1.0, 
+                                               shape=(args.seasonal_periods, L))
+                seasonal_loc_raw = seasonal_loc_raw_std * seasonal_sigma_loc
+                seasonal_loc = seasonal_loc_raw - pt.mean(seasonal_loc_raw, axis=0)
+            else:
+                # Centered parameterization (original)
+                seasonal_sigma_base = pm.HalfNormal("seasonal_sigma_base", args.seasonal_sigma_base)
+                seasonal_base_raw = pm.GaussianRandomWalk("seasonal_base_raw", 
+                                                         sigma=seasonal_sigma_base, 
+                                                         shape=args.seasonal_periods)
+                seasonal_base = seasonal_base_raw - pt.mean(seasonal_base_raw)
+                
+                seasonal_sigma_loc = pm.HalfNormal("seasonal_sigma_loc", args.seasonal_sigma_loc)
+                seasonal_loc_raw = pm.Normal("seasonal_loc_raw", 0.0, seasonal_sigma_loc, 
+                                           shape=(args.seasonal_periods, L))
+                seasonal_loc = seasonal_loc_raw - pt.mean(seasonal_loc_raw, axis=0)
             
             # Map seasonal effects to time periods using month indices
             month_tensor = pt.as_tensor_variable(month_indices)
@@ -443,7 +463,8 @@ def on_train(training_data: pd.DataFrame, args: Config= Config()) -> tuple:
             draws=args.draws,
             tune=args.tune,
             chains=args.chains,
-            target_accept=0.9,
+            target_accept=args.target_accept,
+            max_treedepth=args.max_treedepth,
             random_seed=args.seed,
             progressbar=True,
         )
@@ -496,12 +517,24 @@ def on_predict(model_and_data: tuple, historic_data: pd.DataFrame, args: Config=
         # Seasonal effects for future periods
         seasonal_effects_fut = pt.zeros((H, L))
         if args.use_seasonal_effects:
-            # Get seasonal parameters from posterior
-            seasonal_base_val = idata.posterior["seasonal_base_raw"].mean(dim=["chain", "draw"]).values
-            seasonal_base_val = seasonal_base_val - np.mean(seasonal_base_val)  # Apply zero-sum constraint
+            # Get seasonal parameters from posterior - handle both centered and non-centered
+            if args.use_non_centered and "seasonal_base_raw_std" in idata.posterior:
+                # Non-centered parameterization
+                seasonal_sigma_base_val = idata.posterior["seasonal_sigma_base"].mean(dim=["chain", "draw"]).values
+                seasonal_base_raw_std_val = idata.posterior["seasonal_base_raw_std"].mean(dim=["chain", "draw"]).values
+                seasonal_base_val = seasonal_base_raw_std_val * seasonal_sigma_base_val
+                
+                seasonal_sigma_loc_val = idata.posterior["seasonal_sigma_loc"].mean(dim=["chain", "draw"]).values
+                seasonal_loc_raw_std_val = idata.posterior["seasonal_loc_raw_std"].mean(dim=["chain", "draw"]).values
+                seasonal_loc_val = seasonal_loc_raw_std_val * seasonal_sigma_loc_val
+            else:
+                # Centered parameterization (fallback)
+                seasonal_base_val = idata.posterior["seasonal_base_raw"].mean(dim=["chain", "draw"]).values
+                seasonal_loc_val = idata.posterior["seasonal_loc_raw"].mean(dim=["chain", "draw"]).values
             
-            seasonal_loc_val = idata.posterior["seasonal_loc_raw"].mean(dim=["chain", "draw"]).values
-            seasonal_loc_val = seasonal_loc_val - np.mean(seasonal_loc_val, axis=0)  # Zero-sum constraint
+            # Apply zero-sum constraints
+            seasonal_base_val = seasonal_base_val - np.mean(seasonal_base_val)
+            seasonal_loc_val = seasonal_loc_val - np.mean(seasonal_loc_val, axis=0)
             
             # Generate future month indices starting from end of historic data
             extended_time_idx = extended_data_dict['extended_time_idx']
@@ -747,9 +780,20 @@ def plot_model_components(model_file: str, output_dir: str, config: Config):
 def plot_seasonal_effects(idata, locations, config: Config, output_file: str):
     """Plot seasonal effects with 90% confidence intervals for each location."""
     
-    # Extract seasonal components from posterior
-    seasonal_base_samples = idata.posterior['seasonal_base_raw'].values  # (chain, draw, seasonal_periods)
-    seasonal_loc_samples = idata.posterior['seasonal_loc_raw'].values   # (chain, draw, seasonal_periods, locations)
+    # Extract seasonal components from posterior - handle both centered and non-centered
+    if config.use_non_centered and "seasonal_base_raw_std" in idata.posterior.data_vars:
+        # Non-centered parameterization
+        seasonal_sigma_base = idata.posterior['seasonal_sigma_base'].values  # (chain, draw)
+        seasonal_base_raw_std = idata.posterior['seasonal_base_raw_std'].values  # (chain, draw, seasonal_periods)
+        seasonal_base_samples = seasonal_base_raw_std * seasonal_sigma_base[:, :, np.newaxis]
+        
+        seasonal_sigma_loc = idata.posterior['seasonal_sigma_loc'].values  # (chain, draw)
+        seasonal_loc_raw_std = idata.posterior['seasonal_loc_raw_std'].values  # (chain, draw, seasonal_periods, locations)
+        seasonal_loc_samples = seasonal_loc_raw_std * seasonal_sigma_loc[:, :, np.newaxis, np.newaxis]
+    else:
+        # Centered parameterization (fallback)
+        seasonal_base_samples = idata.posterior['seasonal_base_raw'].values  # (chain, draw, seasonal_periods)
+        seasonal_loc_samples = idata.posterior['seasonal_loc_raw'].values   # (chain, draw, seasonal_periods, locations)
     
     # Flatten chain and draw dimensions
     n_chains, n_draws = seasonal_base_samples.shape[:2]
