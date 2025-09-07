@@ -27,6 +27,9 @@ import arviz as az
 import matplotlib.pyplot as plt
 import seaborn as sns
 
+from extension import continue_rw_process
+
+
 class Config(pydantic.BaseModel):
     covariate_names: list[str] = ['rainfall', 'mean_temperature']
     horizon: int = 3
@@ -50,9 +53,11 @@ class Config(pydantic.BaseModel):
     target_accept: float = 0.95  # Higher target_accept to reduce divergences
     max_treedepth: int = 12  # Increased max tree depth
     # Non-centered parameterization option
-    use_non_centered: bool = True  # Use non-centered parameterization for better sampling
+    use_non_centered: bool = False  # Use non-centered parameterization for better sampling
     # Regularization parameters
     beta_prior_sigma: float = 0.5  # Stronger regularization for covariates to reduce correlation with seasonal effects
+    random_walk_sigma: float = 0.5
+
 
 def complete_monthly_panel(df, date_col, loc_col, cols, freq="MS"):
     df = df.copy()
@@ -282,38 +287,6 @@ def prepare_extended_data(data_dict, historic_data, args):
         'log_pop_offset_extended': log_pop_offset_extended
     }
 
-def continue_rw_process(idata, T_orig, T_extended, sigma_rw_val, L):
-    """Continue Random Walk process from training end through historic period."""
-    if T_extended <= T_orig:
-        # No extension needed
-        u_rw_last = (
-            idata.posterior["u_rw"]
-            .isel(u_rw_dim_0=-1)
-            .mean(dim=["chain", "draw"])
-            .values
-        )
-        return pt.as_tensor_variable(u_rw_last)
-    
-    # Get starting point from training
-    u_rw_last = (
-        idata.posterior["u_rw"]
-        .isel(u_rw_dim_0=-1)
-        .mean(dim=["chain", "draw"])
-        .values
-    )
-    
-    # Continue Random Walk for the extended period
-    steps_to_continue = T_extended - T_orig
-    u_current = pt.as_tensor_variable(u_rw_last)
-    
-    # Generate Random Walk steps for the historic extension period
-    # Random walk: u_t = u_{t-1} + noise_t
-    for step in range(steps_to_continue):
-        unique_id = str(uuid.uuid4())[:8]
-        noise = pm.Normal(f"historic_noise_{unique_id}_{step}", 0.0, sigma_rw_val, shape=(L,))
-        u_current = u_current + noise
-    
-    return u_current
 
 def format_predictions_from_historic_end(ppc, extended_data_dict, args: Config):
     """Format predictions starting from end of historic data."""
@@ -399,24 +372,29 @@ def on_train(training_data: pd.DataFrame, args: Config= Config()) -> tuple:
                 seasonal_sigma_base = pm.HalfNormal("seasonal_sigma_base", args.seasonal_sigma_base)
                 
                 # Non-centered base seasonal effect
-                seasonal_base_raw_std = pm.GaussianRandomWalk("seasonal_base_raw_std", 
-                                                            sigma=1.0, 
-                                                            shape=args.seasonal_periods)
+                seasonal_base_raw_std = pm.GaussianRandomWalk(
+                    "seasonal_base_raw_std",
+                    init_dist=pm.Normal.dist(0, 0.1),
+                    sigma=args.random_walk_sigma,
+                    shape=args.seasonal_periods)
                 seasonal_base_raw = seasonal_base_raw_std * seasonal_sigma_base
                 seasonal_base = seasonal_base_raw - pt.mean(seasonal_base_raw)
                 
                 # Non-centered location-specific seasonal effects
                 seasonal_sigma_loc = pm.HalfNormal("seasonal_sigma_loc", args.seasonal_sigma_loc)
-                seasonal_loc_raw_std = pm.Normal("seasonal_loc_raw_std", 0.0, 1.0, 
+                seasonal_loc_raw_std = pm.Normal("seasonal_loc_raw_std", 0.0, 1.0,
                                                shape=(args.seasonal_periods, L))
                 seasonal_loc_raw = seasonal_loc_raw_std * seasonal_sigma_loc
                 seasonal_loc = seasonal_loc_raw - pt.mean(seasonal_loc_raw, axis=0)
             else:
                 # Centered parameterization (original)
                 seasonal_sigma_base = pm.HalfNormal("seasonal_sigma_base", args.seasonal_sigma_base)
-                seasonal_base_raw = pm.GaussianRandomWalk("seasonal_base_raw", 
-                                                         sigma=seasonal_sigma_base, 
-                                                         shape=args.seasonal_periods)
+                seasonal_base_raw = pm.GaussianRandomWalk(
+                    "seasonal_base_raw",
+                    init_dist=pm.Normal.dist(0, 0.1),
+                    sigma=seasonal_sigma_base,
+                    shape=args.seasonal_periods,
+                )
                 seasonal_base = seasonal_base_raw - pt.mean(seasonal_base_raw)
                 
                 seasonal_sigma_loc = pm.HalfNormal("seasonal_sigma_loc", args.seasonal_sigma_loc)
@@ -449,6 +427,7 @@ def on_train(training_data: pd.DataFrame, args: Config= Config()) -> tuple:
         # Random walk process for each location independently
         # GaussianRandomWalk creates a random walk along the time dimension
         u_seq = pm.GaussianRandomWalk("u_rw",
+
                                       sigma=sigma_rw,
                                       shape=(T, L))
 
