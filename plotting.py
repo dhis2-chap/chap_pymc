@@ -1,9 +1,12 @@
 import pickle
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import arviz as az
+import pytest
+
 
 def plot_seasonal_effects(idata, locations, config: 'Config', output_file: str):
     """Plot seasonal effects with 90% confidence intervals for each location."""
@@ -627,3 +630,31 @@ def plot_model_components(model_file: str, output_dir: str, config: 'Config'):
     plot_all_parameter_samples(idata, config, f"{output_dir}/parameter_samples.png")
 
     print(f"Model component plots saved to directory: {output_dir}")
+
+
+def plot_log_space(idata):
+    posterior = idata.posterior
+    log_mu_past = posterior['log_mu_past']
+    y = idata.observed_data['y'].values
+    median = log_mu_past.median(dim=['chain', 'draw']).values
+    q_high = log_mu_past.quantile(0.90, dim=["chain", "draw"]).values
+    q_low = log_mu_past.quantile(0.10, dim=["chain", "draw"]).values
+    n_locations = median.shape[-1]
+    for i in range(n_locations):
+        plt.plot(median[..., i], color='r')
+        plt.plot(np.log(y[..., i]), color='b')
+        #plt.plot(q_high[..., i])
+        #plt.plot(q_low[..., i])
+        plt.show()
+
+
+
+@pytest.fixture
+def idata():
+    model_file = Path(__file__).parent / 'test_runs' / 'true_model'
+    base_name = model_file
+    idata_filename = f"{base_name}_idata.nc"
+    return az.from_netcdf(idata_filename)
+
+def test_plot_logspace(idata):
+    plot_log_space(idata)

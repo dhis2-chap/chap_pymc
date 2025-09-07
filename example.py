@@ -198,13 +198,9 @@ def format_predictions_from_historic_end(ppc, extended_data_dict, args: Config):
 
 def on_train(training_data: pd.DataFrame, args: Config= Config()) -> tuple:
     '''This should train a model and return everything needed for prediction'''
-    # We need to extract args from somewhere - for now, use default Args
-    # In a real implementation, you might want to pass args differently
-
-    # Prepare data directly
-    # Prepare data and train model
-    data_dict = prepare_data(args, training_data)
     """Train the PyMC model and return fitted model with inference data."""
+    data_dict = prepare_data(args, training_data)
+
     y = data_dict["y"]
     X_std = data_dict["X_std"]
     log_pop_offset = data_dict["log_pop_offset"]
@@ -228,7 +224,7 @@ def on_train(training_data: pd.DataFrame, args: Config= Config()) -> tuple:
         alpha = pm.HalfNormal("alpha", 1.0)
 
         # Add population offset to the linear predictor before exponentiating
-        log_mu_past = linpast + seasonal_effects + location_effects + u_seq + pt.as_tensor_variable(log_pop_offset_const)
+        log_mu_past = pm.Deterministic('log_mu_past', linpast + seasonal_effects + location_effects + u_seq + pt.as_tensor_variable(log_pop_offset_const))
         mu_past = pt.exp(log_mu_past)
         y_like = pm.NegativeBinomial("y", mu=mu_past, alpha=alpha, observed=y_const)
 
@@ -249,7 +245,6 @@ def get_rw_effect(L, T):
     # ----- Random Walk process for each location -----
     sigma_rw = pm.HalfNormal("sigma_rw", 1.0)
     u_seq = pm.GaussianRandomWalk("u_rw",
-
                                   sigma=sigma_rw,
                                   shape=(T, L))
     return u_seq
@@ -294,19 +289,12 @@ def get_centered_seasonal(L, args):
         sigma=seasonal_sigma_base,
         shape=args.seasonal_periods,
     )
-    #seasonal_base = seasonal_base_raw - pt.mean(seasonal_base_raw)
     seasonal_loc = pm.GaussianRandomWalk(
         name="seasonal_loc",
         init_dist = pm.Normal.dist(np.zeros(L, dtype=float), 0.001),
         sigma=seasonal_sigma_base/2,
         shape = (L, args.seasonal_periods))
 
-
-    #seasonal_sigma_loc = pm.HalfNormal("seasonal_sigma_loc", args.seasonal_sigma_loc)
-    #seasonal_loc_raw = pm.Normal("seasonal_loc_raw", 0.0,
-                                 #seasonal_sigma_loc,
-                                 #shape=(args.seasonal_periods, L))
-    #seasonal_loc = seasonal_loc_raw - pt.mean(seasonal_loc_raw, axis=0)
     return seasonal_base_raw, seasonal_loc
 
 
