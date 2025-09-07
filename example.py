@@ -8,11 +8,8 @@
 #   python example.py plot model.pkl training_data.csv historic_data.csv predictions.csv config.yaml output.png
 #   python example.py plot-components model.pkl config.yaml output_dir
 
-import argparse
 import uuid
 import pickle
-import json
-from _ast import arg
 
 import pytest
 import yaml
@@ -25,10 +22,9 @@ import pytensor.tensor as pt
 import cyclopts
 import arviz as az
 import matplotlib.pyplot as plt
-import seaborn as sns
 
-from extension import continue_rw_process
-
+from extension import continue_rw_process, prepare_extended_data
+from util import  to_tensor_panels, safe_impute, extract_month_indices, complete_monthly_panel
 
 class Config(pydantic.BaseModel):
     covariate_names: list[str] = ['rainfall', 'mean_temperature']
@@ -58,39 +54,6 @@ class Config(pydantic.BaseModel):
     beta_prior_sigma: float = 0.5  # Stronger regularization for covariates to reduce correlation with seasonal effects
     random_walk_sigma: float = 0.5
 
-
-def complete_monthly_panel(df, date_col, loc_col, cols, freq="MS"):
-    df = df.copy()
-    df[date_col] = pd.to_datetime(df[date_col])
-    df = df.sort_values([loc_col, date_col])
-    all_locs = df[loc_col].unique().tolist()
-    tmin, tmax = df[date_col].min(), df[date_col].max()
-    full_time = pd.date_range(tmin, tmax, freq=freq)
-    chunks = []
-    for loc in all_locs:
-        g = df[df[loc_col] == loc].set_index(date_col).reindex(full_time)
-        g[loc_col] = loc
-        chunks.append(g[cols + [loc_col]])
-    out = pd.concat(chunks).reset_index().rename(columns={"index": date_col})
-    return out, full_time, all_locs
-
-def to_tensor_panels(pnl, time_idx, locs, date_col, loc_col, col):
-    T, L = len(time_idx), len(locs)
-    pivot = pnl.pivot(index=date_col, columns=loc_col, values=col).reindex(time_idx)
-    M = np.full((T, L), np.nan, dtype=float)
-    for j, loc in enumerate(locs):
-        M[:, j] = pivot[loc].to_numpy()
-    return M
-
-def safe_impute(M):
-    df = pd.DataFrame(M)
-    df = df.interpolate(limit_direction="both").ffill().bfill()
-    return df.to_numpy()
-
-def extract_month_indices(time_idx):
-    """Extract month indices (0-11) from time index for seasonal effects."""
-    months = pd.to_datetime(time_idx).month - 1  # Convert to 0-11
-    return months.values
 
 def prepare_data(args: Config, raw):
     """Prepare and preprocess data for training."""
@@ -186,107 +149,6 @@ def format_predictions(ppc, data_dict, args):
     out_df.to_csv('forecast_samples.csv', index=False)
     return out_df
 
-def prepare_extended_data(data_dict, historic_data, args):
-    """Prepare extended data that includes historic observations beyond training period."""
-    # Get original training data info
-    original_time_idx = data_dict['time_idx']
-    original_locs = data_dict['locs']
-    scaler = data_dict['scaler']
-    T_orig = data_dict['T']
-    L = data_dict['L'] 
-    P = data_dict['P']
-    
-    # Find the last training date
-    last_training_date = original_time_idx[-1]
-    
-    # Filter historic data to only include periods after training
-    historic_data = historic_data.copy()
-    historic_data[args.date_col] = pd.to_datetime(historic_data[args.date_col])
-    extended_historic = historic_data[historic_data[args.date_col] > last_training_date]
-    
-    if len(extended_historic) == 0:
-        # No new historic data, return original data
-        return {
-            **data_dict,
-            'T_extended': T_orig,
-            'X_extended': data_dict['X_std'],
-            'extended_time_idx': original_time_idx,
-            'extended_month_indices': data_dict['month_indices'],
-            'log_pop_offset_extended': data_dict['log_pop_offset']
-        }
-    
-    # Create extended time index
-    extended_periods = extended_historic[args.date_col].unique()
-    extended_periods = pd.to_datetime(extended_periods)
-    extended_periods = pd.DatetimeIndex(extended_periods).sort_values()
-    extended_time_idx = original_time_idx.union(extended_periods).sort_values()
-    
-    # Process extended historic data similar to training data
-    available_cols = extended_historic.columns.tolist()
-    keep_cols = [args.target_col] + args.covariate_names
-    has_population = 'population' in available_cols
-    if has_population:
-        keep_cols.append('population')
-    extended_panel, _, extended_locs = complete_monthly_panel(
-        extended_historic, args.date_col, args.loc_col, keep_cols, freq=args.freq
-    )
-    
-    # Ensure locations match original training data
-    if set(extended_locs) != set(original_locs):
-        print(f"Warning: Location mismatch. Original: {set(original_locs)}, Extended: {set(extended_locs)}")
-    
-    # Extract extended covariates and population for the new period only
-    extended_start_idx = len(original_time_idx) 
-    extended_end_idx = len(extended_time_idx)
-    
-    if P > 0:
-        # Get covariate data for the extended period
-        X_extended_new = []
-        for col in args.covariate_names:
-            X_col = to_tensor_panels(extended_panel, extended_time_idx, original_locs, 
-                                   args.date_col, args.loc_col, col)
-            X_extended_new.append(X_col[extended_start_idx:extended_end_idx, :])
-        
-        if X_extended_new:
-            X_extended_new = np.stack(X_extended_new, axis=2)  # (T_new, L, P)
-            # Standardize using original scaler
-            T_new = X_extended_new.shape[0]
-            X_extended_new_std = scaler.transform(X_extended_new.reshape(T_new*L, P)).reshape(T_new, L, P)
-            # Combine with original standardized data
-            X_extended = np.concatenate([data_dict['X_std'], X_extended_new_std], axis=0)
-        else:
-            X_extended = data_dict['X_std']
-    else:
-        X_extended = None
-    
-    # Handle population data for the extended period
-    if has_population and extended_start_idx < extended_end_idx:
-        # Get population data for the extended period
-        pop_extended = to_tensor_panels(extended_panel, extended_time_idx, original_locs, 
-                                      args.date_col, args.loc_col, 'population')
-        # Forward fill any missing population values
-        if np.isnan(pop_extended).any():
-            pop_extended = safe_impute(pop_extended)
-        log_pop_offset_extended = np.log(np.clip(pop_extended, 1.0, None))
-    elif has_population:
-        # No extension, use original population data
-        log_pop_offset_extended = data_dict['log_pop_offset']
-    else:
-        # No population data available - create zero offset for extended period
-        log_pop_offset_extended = np.zeros((len(extended_time_idx), L))
-    
-    # Extract month indices for seasonal effects (extended period)
-    extended_month_indices = extract_month_indices(extended_time_idx) if args.use_seasonal_effects else None
-    
-    return {
-        **data_dict,
-        'T_extended': len(extended_time_idx),
-        'X_extended': X_extended,
-        'extended_time_idx': extended_time_idx,
-        'extended_month_indices': extended_month_indices,
-        'log_pop_offset_extended': log_pop_offset_extended
-    }
-
 
 def format_predictions_from_historic_end(ppc, extended_data_dict, args: Config):
     """Format predictions starting from end of historic data."""
@@ -353,62 +215,10 @@ def on_train(training_data: pd.DataFrame, args: Config= Config()) -> tuple:
     with pm.Model() as model:
         # ----- Fixed effects -----
         intercept = pm.Normal("intercept", 0.0, 5.0)
-        if P:
-            # Use stronger regularization if seasonal effects are enabled to reduce correlation
-            beta_sigma = args.beta_prior_sigma if args.use_seasonal_effects else 1.0
-            beta = pm.Normal("beta", 0.0, beta_sigma, shape=P)
-            linpast = intercept + pt.tensordot(
-                pt.as_tensor_variable(Xpast_const), beta, axes=[2, 0]
-            )
-        else:
-            linpast = intercept + pt.zeros((T, L))
+        # Use stronger regularization if seasonal effects are enabled to reduce correlation
+        linpast = get_linear_predictor(P, Xpast_const, args, intercept)
 
-        # ----- Seasonal effects (if enabled) -----
-        seasonal_effects = pt.zeros((T, L))
-        if args.use_seasonal_effects:
-            
-            if args.use_non_centered:
-                # Non-centered parameterization for better sampling
-                seasonal_sigma_base = pm.HalfNormal("seasonal_sigma_base", args.seasonal_sigma_base)
-                
-                # Non-centered base seasonal effect
-                seasonal_base_raw_std = pm.GaussianRandomWalk(
-                    "seasonal_base_raw_std",
-                    init_dist=pm.Normal.dist(0, 0.1),
-                    sigma=args.random_walk_sigma,
-                    shape=args.seasonal_periods)
-                seasonal_base_raw = seasonal_base_raw_std * seasonal_sigma_base
-                seasonal_base = seasonal_base_raw - pt.mean(seasonal_base_raw)
-                
-                # Non-centered location-specific seasonal effects
-                seasonal_sigma_loc = pm.HalfNormal("seasonal_sigma_loc", args.seasonal_sigma_loc)
-                seasonal_loc_raw_std = pm.Normal("seasonal_loc_raw_std", 0.0, 1.0,
-                                               shape=(args.seasonal_periods, L))
-                seasonal_loc_raw = seasonal_loc_raw_std * seasonal_sigma_loc
-                seasonal_loc = seasonal_loc_raw - pt.mean(seasonal_loc_raw, axis=0)
-            else:
-                # Centered parameterization (original)
-                seasonal_sigma_base = pm.HalfNormal("seasonal_sigma_base", args.seasonal_sigma_base)
-                seasonal_base_raw = pm.GaussianRandomWalk(
-                    "seasonal_base_raw",
-                    init_dist=pm.Normal.dist(0, 0.1),
-                    sigma=seasonal_sigma_base,
-                    shape=args.seasonal_periods,
-                )
-                seasonal_base = seasonal_base_raw - pt.mean(seasonal_base_raw)
-                
-                seasonal_sigma_loc = pm.HalfNormal("seasonal_sigma_loc", args.seasonal_sigma_loc)
-                seasonal_loc_raw = pm.Normal("seasonal_loc_raw", 0.0, seasonal_sigma_loc, 
-                                           shape=(args.seasonal_periods, L))
-                seasonal_loc = seasonal_loc_raw - pt.mean(seasonal_loc_raw, axis=0)
-            
-            # Map seasonal effects to time periods using month indices
-            month_tensor = pt.as_tensor_variable(month_indices)
-            seasonal_base_mapped = seasonal_base[month_tensor]  # (T,)
-            seasonal_loc_mapped = seasonal_loc[month_tensor, :]  # (T, L)
-            
-            # Total seasonal effect = base + location-specific
-            seasonal_effects = seasonal_base_mapped[:, None] + seasonal_loc_mapped
+        seasonal_effects = get_seasonal_effects(L, T, args, month_indices)
 
         # ----- Location random effects (IID) -----
         location_effects = pt.zeros((T, L))
@@ -449,6 +259,76 @@ def on_train(training_data: pd.DataFrame, args: Config= Config()) -> tuple:
         )
     # Return everything needed for prediction
     return (model, idata, data_dict, args)
+
+
+def get_seasonal_effects(L, T, args, month_indices):
+    # ----- Seasonal effects (if enabled) -----
+    seasonal_effects = pt.zeros((T, L))
+    if args.use_seasonal_effects:
+        if args.use_non_centered:
+            # Non-centered parameterization for better sampling
+            seasonal_base, seasonal_loc = get_non_centered_seasonal(L, args)
+        else:
+            # Centered parameterization (original)
+            seasonal_base, seasonal_loc = get_centered_seasonal(L, args)
+
+        # Map seasonal effects to time periods using month indices
+        month_tensor = pt.as_tensor_variable(month_indices)
+        seasonal_base_mapped = seasonal_base[month_tensor]  # (T,)
+        seasonal_loc_mapped = seasonal_loc[month_tensor, :]  # (T, L)
+
+        # Total seasonal effect = base + location-specific
+        seasonal_effects = seasonal_base_mapped[:, None]#  + seasonal_loc_mapped
+    return seasonal_effects
+
+
+def get_centered_seasonal(L, args):
+    seasonal_sigma_base = pm.HalfNormal("seasonal_sigma_base", args.seasonal_sigma_base)
+    seasonal_base_raw = pm.GaussianRandomWalk(
+        "seasonal_base_raw",
+        init_dist=pm.Normal.dist(0, 0.1),
+        sigma=seasonal_sigma_base,
+        shape=args.seasonal_periods,
+    )
+    seasonal_base = seasonal_base_raw - pt.mean(seasonal_base_raw)
+    seasonal_sigma_loc = pm.HalfNormal("seasonal_sigma_loc", args.seasonal_sigma_loc)
+    seasonal_loc_raw = pm.Normal("seasonal_loc_raw", 0.0, seasonal_sigma_loc,
+                                 shape=(args.seasonal_periods, L))
+    seasonal_loc = seasonal_loc_raw - pt.mean(seasonal_loc_raw, axis=0)
+    return seasonal_base, seasonal_loc
+
+
+
+
+def get_non_centered_seasonal(L, args):
+    seasonal_sigma_base = pm.HalfNormal("seasonal_sigma_base", args.seasonal_sigma_base)
+    # Non-centered base seasonal effect
+    seasonal_base_raw_std = pm.GaussianRandomWalk(
+        "seasonal_base_raw_std",
+        init_dist=pm.Normal.dist(0, 0.1),
+        sigma=args.random_walk_sigma,
+        shape=args.seasonal_periods)
+
+    seasonal_base_raw = seasonal_base_raw_std * seasonal_sigma_base
+    seasonal_base = seasonal_base_raw - pt.mean(seasonal_base_raw)
+
+    # Non-centered location-specific seasonal effects
+    seasonal_sigma_loc = pm.HalfNormal("seasonal_sigma_loc", args.seasonal_sigma_loc)
+    seasonal_loc_raw_std = pm.Normal("seasonal_loc_raw_std", 0.0, 1.0,
+                                     shape=(args.seasonal_periods, L))
+    seasonal_loc_raw = seasonal_loc_raw_std * seasonal_sigma_loc
+    seasonal_loc = seasonal_loc_raw - pt.mean(seasonal_loc_raw, axis=0)
+    return seasonal_base, seasonal_loc
+
+
+def get_linear_predictor(P, Xpast_const, args, intercept):
+    beta_sigma = args.beta_prior_sigma if args.use_seasonal_effects else 1.0
+    beta = pm.Normal("beta", 0.0, beta_sigma, shape=P)
+    linpast = intercept + pt.tensordot(
+        pt.as_tensor_variable(Xpast_const), beta, axes=[2, 0]
+    )
+    return linpast
+
 
 def on_predict(model_and_data: tuple, historic_data: pd.DataFrame, args: Config= Config()) -> pd.DataFrame:
     '''Use trained model parameters to predic t from the end of historic_data'''
@@ -1230,7 +1110,7 @@ def test(folder_name):
         historic_data=('%s/historic_data.csv' % folder_name),
         future_data=('%s/future_data.csv' % folder_name),
     )
-    config_filename = 'real_config.yaml'
+    config_filename = 'test_config.yaml'
     train(fileset.train_data,
           'test_runs/model', config_filename)
     predict('test_runs/model',
