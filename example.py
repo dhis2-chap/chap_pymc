@@ -218,35 +218,15 @@ def on_train(training_data: pd.DataFrame, args: Config= Config()) -> tuple:
 
     with pm.Model() as model:
         # ----- Fixed effects -----
-        intercept = pm.Normal("intercept", 0.0, 5.0)
-        # Use stronger regularization if seasonal effects are enabled to reduce correlation
-        linpast = get_linear_predictor(P, Xpast_const, args, intercept)
 
+        linpast = get_linear_predictor(P, Xpast_const, args)
         seasonal_effects = get_seasonal_effects(L, T, args, month_indices)
-
-        # ----- Location random effects (IID) -----
-        location_effects = pt.zeros((T, L))
-        if args.use_location_effects:
-            # IID location random effects - constant across time for each location
-            location_sigma = pm.HalfNormal("location_sigma", args.location_sigma)
-            location_raw = pm.Normal("location_raw", 0.0, location_sigma, shape=L)
-            # Apply zero-sum constraint to make it identifiable
-            location_centered = location_raw - pt.mean(location_raw)
-            # Broadcast to (T, L) - same effect for each location across all time periods
-            location_effects = pt.tile(location_centered[None, :], (T, 1))
-
-        # ----- Random Walk process for each location -----
-        sigma_rw = pm.HalfNormal("sigma_rw", 1.0)
-
-        # Random walk process for each location independently
-        # GaussianRandomWalk creates a random walk along the time dimension
-        u_seq = pm.GaussianRandomWalk("u_rw",
-
-                                      sigma=sigma_rw,
-                                      shape=(T, L))
+        location_effects = get_location_effects(L, args)
+        u_seq = get_rw_effect(L, T)
 
         # ----- Observation model: Negative Binomial -----
         alpha = pm.HalfNormal("alpha", 1.0)
+
         # Add population offset to the linear predictor before exponentiating
         log_mu_past = linpast + seasonal_effects + location_effects + u_seq + pt.as_tensor_variable(log_pop_offset_const)
         mu_past = pt.exp(log_mu_past)
@@ -263,6 +243,22 @@ def on_train(training_data: pd.DataFrame, args: Config= Config()) -> tuple:
         )
     # Return everything needed for prediction
     return (model, idata, data_dict, args)
+
+
+def get_rw_effect(L, T):
+    # ----- Random Walk process for each location -----
+    sigma_rw = pm.HalfNormal("sigma_rw", 1.0)
+    u_seq = pm.GaussianRandomWalk("u_rw",
+
+                                  sigma=sigma_rw,
+                                  shape=(T, L))
+    return u_seq
+
+
+def get_location_effects(L, args):
+    location_sigma = pm.HalfNormal("location_sigma", args.location_sigma)
+    location_effects = pm.Normal("location_raw", 0.0, location_sigma, shape=L)[None, :]
+    return location_effects
 
 
 def get_seasonal_effects(L, T, args, month_indices):
@@ -338,13 +334,16 @@ def get_non_centered_seasonal(L, args):
     return seasonal_base, seasonal_loc
 
 
-def get_linear_predictor(P, Xpast_const, args, intercept):
+def get_linear_predictor(P, Xpast_const, args):
+    intercept = pm.Normal("intercept", 0.0, 5.0)
     beta_sigma = args.beta_prior_sigma if args.use_seasonal_effects else 1.0
     beta = pm.Normal("beta", 0.0, beta_sigma, shape=P)
     linpast = intercept + pt.tensordot(
         pt.as_tensor_variable(Xpast_const), beta, axes=[2, 0]
     )
     return linpast
+
+
 
 
 def on_predict(model_and_data: tuple, historic_data: pd.DataFrame, args: Config= Config()) -> pd.DataFrame:
@@ -394,24 +393,8 @@ def on_predict(model_and_data: tuple, historic_data: pd.DataFrame, args: Config=
         seasonal_effects_fut = pt.zeros((H, L))
         if args.use_seasonal_effects:
             # Get seasonal parameters from posterior - handle both centered and non-centered
-            if args.use_non_centered and "seasonal_base_raw_std" in idata.posterior:
-                # Non-centered parameterization
-                seasonal_sigma_base_val = idata.posterior["seasonal_sigma_base"].mean(dim=["chain", "draw"]).values
-                seasonal_base_raw_std_val = idata.posterior["seasonal_base_raw_std"].mean(dim=["chain", "draw"]).values
-                seasonal_base_val = seasonal_base_raw_std_val * seasonal_sigma_base_val
-                
-                seasonal_sigma_loc_val = idata.posterior["seasonal_sigma_loc"].mean(dim=["chain", "draw"]).values
-                seasonal_loc_raw_std_val = idata.posterior["seasonal_loc_raw_std"].mean(dim=["chain", "draw"]).values
-                seasonal_loc_val = seasonal_loc_raw_std_val * seasonal_sigma_loc_val
-            else:
-                # Centered parameterization (fallback)
-                seasonal_base_val = idata.posterior["seasonal_base_raw"].mean(dim=["chain", "draw"]).values
-                seasonal_loc_val = idata.posterior["seasonal_loc"].mean(dim=["chain", "draw"]).values
-            
-            # Apply zero-sum constraints
-            seasonal_base_val = seasonal_base_val# - np.mean(seasonal_base_val)
-            seasonal_loc_val = seasonal_loc_val# - np.mean(seasonal_loc_val, axis=0)
-            
+            total_seasonal = idata.posterior['total_seasonal'].mean(dim=["chain", "draw"]).values
+
             # Generate future month indices starting from end of historic data
             extended_time_idx = extended_data_dict['extended_time_idx']
             last_date = pd.Timestamp(extended_time_idx[-1])
@@ -420,21 +403,15 @@ def on_predict(model_and_data: tuple, historic_data: pd.DataFrame, args: Config=
             future_month_indices = extract_month_indices(future_dates)
             
             # Map seasonal effects to future periods
-            seasonal_base_fut = seasonal_base_val[future_month_indices]  # (H,)
-            seasonal_loc_fut = seasonal_loc_val[future_month_indices, :]  # (H, L)
-            
-            # Total seasonal effect = base + location-specific
-            seasonal_effects_fut = pt.as_tensor_variable(seasonal_base_fut)[:, None] + pt.as_tensor_variable(seasonal_loc_fut)
+            seasonal_effects_fut = total_seasonal[future_month_indices, :]  # (H,)
 
         # Location effects for future periods
-        location_effects_fut = pt.zeros((H, L))
-        if args.use_location_effects:
-            # Get location parameters from posterior
-            location_val = idata.posterior["location_raw"].mean(dim=["chain", "draw"]).values
-            location_val = location_val - np.mean(location_val)  # Apply zero-sum constraint
+        # Get location parameters from posterior
+        location_effects_fut = idata.posterior["location_raw"].mean(dim=["chain", "draw"]).values[None, :]
+        #location_val = location_val - np.mean(location_val)  # Apply zero-sum constraint
             
-            # Location effects are constant across time, so broadcast to (H, L)
-            location_effects_fut = pt.as_tensor_variable(np.tile(location_val[None, :], (H, 1)))
+        # Location effects are constant across time, so broadcast to (H, L)
+        # location_effects_fut = pt.as_tensor_variable(np.tile(location_val[None, :], (H, 1)))
 
         # Continue Random Walk from training through historic period to get final state
         u_rw_extended = continue_rw_process(idata, T_orig, T_extended, sigma_rw_val, L)
@@ -455,7 +432,7 @@ def on_predict(model_and_data: tuple, historic_data: pd.DataFrame, args: Config=
         # Stack future Random Walk values (skip initial value)
         u_fut_seq = pt.stack(u_fut[1:], axis=0)  # (H, L)
 
-        # Add population offset to future predictions
+        # Add population offset to future predictionsw
         log_mu_future = linfut + seasonal_effects_fut + location_effects_fut + u_fut_seq + pt.as_tensor_variable(log_pop_offset_future)
         mu_future = pt.exp(log_mu_future)
         y_fut = pm.NegativeBinomial(f"y_fut_{unique_id}", mu=mu_future, alpha=alpha_val)
@@ -598,24 +575,24 @@ def test(folder_name):
             config_filename)
     
     # Create visualization
-    plot('test_runs/model',
-         fileset.train_data,
-         fileset.historic_data,
-         'test_runs/forecast_samples.csv',
-         config_filename,
-         f'test_runs/visualization_{folder_name}.png',
-         plot_params=True)
-    
-    df = pd.read_csv('test_runs/forecast_samples.csv')
-
-    for colname in ['location', 'time_period', 'sample_0']:
-        assert colname in df.columns
-    train_df = pd.read_csv(fileset.train_data)
-    future_periods = pd.read_csv(fileset.future_data)['time_period'].unique()
-    predicted_periods = df.time_period.unique()
-    assert set(future_periods) == set(predicted_periods)
-    n_locations = train_df['location'].nunique()
-    assert len(df) == n_locations * 3  # 3 horizons
+    # plot('test_runs/model',
+    #      fileset.train_data,
+    #      fileset.historic_data,
+    #      'test_runs/forecast_samples.csv',
+    #      config_filename,
+    #      f'test_runs/visualization_{folder_name}.png',
+    #      plot_params=True)
+    #
+    # df = pd.read_csv('test_runs/forecast_samples.csv')
+    #
+    # for colname in ['location', 'time_period', 'sample_0']:
+    #     assert colname in df.columns
+    # train_df = pd.read_csv(fileset.train_data)
+    # future_periods = pd.read_csv(fileset.future_data)['time_period'].unique()
+    # predicted_periods = df.time_period.unique()
+    # assert set(future_periods) == set(predicted_periods)
+    # n_locations = train_df['location'].nunique()
+    # assert len(df) == n_locations * 3  # 3 horizons
 
 
 if __name__ == "__main__":

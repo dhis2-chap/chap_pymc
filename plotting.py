@@ -198,7 +198,7 @@ def plot_location_effects(idata, locations, output_file: str):
     )  # (samples, locations)
 
     # Apply zero-sum constraint (as done in the model)
-    location_centered = location_flat - np.mean(location_flat, axis=1, keepdims=True)
+    location_centered = location_flat# - np.mean(location_flat, axis=1, keepdims=True)
 
     # Calculate statistics
     location_mean = np.mean(location_centered, axis=0)
