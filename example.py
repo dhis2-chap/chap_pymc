@@ -58,6 +58,7 @@ class Config(pydantic.BaseModel):
     beta_prior_sigma: float = 0.5  # Stronger regularization for covariates to reduce correlation with seasonal effects
     random_walk_sigma: float = 0.5
 
+DO_TRAIN = False
 
 def prepare_data(args: Config, raw):
     """Prepare and preprocess data for training."""
@@ -333,12 +334,13 @@ def get_linear_predictor(P, Xpast_const, args):
 
 
 
-
 def on_predict(model_and_data: tuple, historic_data: pd.DataFrame, args: Config= Config()) -> pd.DataFrame:
     '''Use trained model parameters to predic t from the end of historic_data'''
     # Unpack the training results
-    model, idata, data_dict, args = model_and_data
-    
+    if DO_TRAIN:
+        model, idata, data_dict, args = model_and_data
+    else:
+        model_dat, idata, data_dict, args = on_train(historic_data, args)
     # Prepare extended data that includes historic observations
     extended_data_dict = prepare_extended_data(data_dict, historic_data, args)
     
@@ -442,7 +444,8 @@ app = cyclopts.App()
 
 @app.command()
 def train(train_data: str, model: str, model_config: str):
-
+    if not DO_TRAIN:
+        return
     config = load_config(model_config)
     df = pd.read_csv(train_data)
     model_and_data = on_train(df, config)
@@ -455,6 +458,7 @@ def train(train_data: str, model: str, model_config: str):
     
     # Save inference data using arviz (NetCDF format)
     idata_filename = f"{base_name}_idata.nc"
+
     idata.to_netcdf(idata_filename)
     
     # Save data dictionary and config using pickle
@@ -474,30 +478,32 @@ def load_config(config_filename):
 
 
 
+
 @app.command()
 def predict(model: str,
             historic_data: str,
             future_data: str,
             out_file: str,
             model_config: str | None = None):
-    # Create base filename without extension
-    base_name = model.rsplit('.', 1)[0] if '.' in model else model
-    args = load_config(model_config)
-    # Load inference data from NetCDF
-    idata_filename = f"{base_name}_idata.nc"
-    idata = az.from_netcdf(idata_filename)
-    
-    # Load data dictionary and config from pickle
-    data_filename = f"{base_name}_data.pkl"
-    with open(data_filename, 'rb') as f:
-        data_dict, args = pickle.load(f)
-    
-    # Create a dummy model object (we don't need the actual model for prediction)
-    model = None
-    
-    # Reconstruct the model_and_data tuple
-    model_and_data = (model, idata, data_dict, args)
-    
+    if DO_TRAIN:
+        # Create base filename without extension
+        base_name = model.rsplit('.', 1)[0] if '.' in model else model
+        args = load_config(model_config)
+        # Load inference data from NetCDF
+        idata_filename = f"{base_name}_idata.nc"
+        idata = az.from_netcdf(idata_filename)
+
+        # Load data dictionary and config from pickle
+        data_filename = f"{base_name}_data.pkl"
+        with open(data_filename, 'rb') as f:
+            data_dict, args = pickle.load(f)
+
+        # Create a dummy model object (we don't need the actual model for prediction)
+        model = None
+        model_and_data = (model, idata, data_dict, args)
+    else:
+        model_and_data = None
+        args = load_config(model_config)
     # Load historic data and make predictions
     historic_data = pd.read_csv(historic_data)
     out_df = on_predict(model_and_data, historic_data, args)
