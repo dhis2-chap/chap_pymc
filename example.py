@@ -222,7 +222,7 @@ def on_train(training_data: pd.DataFrame, args: Config= Config()) -> tuple:
         u_seq = get_rw_effect(L, T)
 
         # ----- Observation model: Negative Binomial -----
-        alpha = pm.HalfNormal("alpha", 1.0)
+        alpha = pm.HalfNormal("alpha", 1.0, shape=L)
 
         # Add population offset to the linear predictor before exponentiating
         log_mu_past = pm.Deterministic('log_mu_past', linpast + seasonal_effects + location_effects + u_seq + pt.as_tensor_variable(log_pop_offset_const))
@@ -337,10 +337,10 @@ def get_linear_predictor(P, Xpast_const, args):
 def on_predict(model_and_data: tuple, historic_data: pd.DataFrame, args: Config= Config()) -> pd.DataFrame:
     '''Use trained model parameters to predic t from the end of historic_data'''
     # Unpack the training results
-    if DO_TRAIN:
-        model, idata, data_dict, args = model_and_data
-    else:
-        model_dat, idata, data_dict, args = on_train(historic_data, args)
+    #if DO_TRAIN:
+    model, idata, data_dict, args = model_and_data
+    #else:
+
     # Prepare extended data that includes historic observations
     extended_data_dict = prepare_extended_data(data_dict, historic_data, args)
     
@@ -443,8 +443,8 @@ def on_predict(model_and_data: tuple, historic_data: pd.DataFrame, args: Config=
 app = cyclopts.App()
 
 @app.command()
-def train(train_data: str, model: str, model_config: str):
-    if not DO_TRAIN:
+def train(train_data: str, model: str, model_config: str, force=False):
+    if (not DO_TRAIN) and not force:
         return
     config = load_config(model_config)
     df = pd.read_csv(train_data)
@@ -485,25 +485,26 @@ def predict(model: str,
             future_data: str,
             out_file: str,
             model_config: str | None = None):
-    if DO_TRAIN:
-        # Create base filename without extension
-        base_name = model.rsplit('.', 1)[0] if '.' in model else model
-        args = load_config(model_config)
-        # Load inference data from NetCDF
-        idata_filename = f"{base_name}_idata.nc"
-        idata = az.from_netcdf(idata_filename)
+    print(f"Predicting {model}")
+    if not DO_TRAIN:
+        print('Training first')
+        train(historic_data, model, model_config, force=True)
 
-        # Load data dictionary and config from pickle
-        data_filename = f"{base_name}_data.pkl"
-        with open(data_filename, 'rb') as f:
-            data_dict, args = pickle.load(f)
+    base_name = model.rsplit(".", 1)[0] if "." in model else model
+    idata_filename = f"{base_name}_idata.nc"
+    args = load_config(model_config)
+    # Load inference data from NetCDF
+    idata = az.from_netcdf(idata_filename)
 
-        # Create a dummy model object (we don't need the actual model for prediction)
-        model = None
-        model_and_data = (model, idata, data_dict, args)
-    else:
-        model_and_data = None
-        args = load_config(model_config)
+    # Load data dictionary and config from pickle
+    data_filename = f"{base_name}_data.pkl"
+    with open(data_filename, 'rb') as f:
+        data_dict, args = pickle.load(f)
+
+    # Create a dummy model object (we don't need the actual model for prediction)
+    model = None
+    model_and_data = (model, idata, data_dict, args)
+
     # Load historic data and make predictions
     historic_data = pd.read_csv(historic_data)
     out_df = on_predict(model_and_data, historic_data, args)
@@ -560,14 +561,17 @@ def test(folder_name):
     config_filename = 'test_config.yaml'
     train(fileset.train_data,
           'test_runs/model', config_filename)
+    predict(
+        "test_runs/model",
+        fileset.historic_data,
+        fileset.future_data,
+        "test_runs/forecast_samples.csv",
+        config_filename,
+    )
+
     plot_components('test_runs/model', config_filename)
 
-    predict('test_runs/model',
-            fileset.historic_data,
-            fileset.future_data,
-            'test_runs/forecast_samples.csv',
-            config_filename)
-    
+
     # Create visualization
     # plot('test_runs/model',
     #      fileset.train_data,
