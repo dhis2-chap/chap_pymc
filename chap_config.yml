@@ -1,0 +1,26 @@
+user_option_values:
+  covariate_names:
+    - rainfall
+    - mean_temperature
+  horizon: 3
+  tune: 100  # Moderate tuning
+  draws: 100  # Moderate draws
+  chains: 2   # Fewer chains for speed
+  seed: 123
+  freq: "MS"
+  target_col: "disease_cases"
+  date_col: "time_period"
+  loc_col: "location"
+  # Seasonal effects with stronger regularization
+  use_seasonal_effects: true
+  seasonal_periods: 12
+  seasonal_sigma_base: 2.0  # More conservative prior
+  seasonal_sigma_loc: 1.0   # More conservative prior
+  # Location random effects
+  use_location_effects: true
+  location_sigma: 5.  # More conservative prior
+  # Anti-divergence settings
+  target_accept: 0.95  # Higher target accept rate
+  max_treedepth: 12    # Increased max tree depth
+  use_non_centered: false  # Use non-centered parameterization
+  beta_prior_sigma: 0.5   # Stronger regularization for covariates

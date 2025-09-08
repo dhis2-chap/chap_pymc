@@ -14,61 +14,6 @@ def plot_seasonal_effects(idata, locations, config: 'Config', output_file: str):
     # Extract seasonal components from posterior - handle both centered and non-centered
     total_seasonal: np.ndarray = idata.posterior['total_seasonal'].values
     total_seasonal = total_seasonal.reshape((-1,)+total_seasonal.shape[-2:])
-    #
-    #
-    #
-    # if config.use_non_centered and "seasonal_base_raw_std" in idata.posterior.data_vars:
-    #     # Non-centered parameterization
-    #     seasonal_sigma_base = idata.posterior[
-    #         "seasonal_sigma_base"
-    #     ].values  # (chain, draw)
-    #     seasonal_base_raw_std = idata.posterior[
-    #         "seasonal_base_raw_std"
-    #     ].values  # (chain, draw, seasonal_periods)
-    #     seasonal_base_samples = (
-    #         seasonal_base_raw_std * seasonal_sigma_base[:, :, np.newaxis]
-    #     )
-    #
-    #     seasonal_sigma_loc = idata.posterior[
-    #         "seasonal_sigma_loc"
-    #     ].values  # (chain, draw)
-    #     seasonal_loc_raw_std = idata.posterior[
-    #         "seasonal_loc_raw_std"
-    #     ].values  # (chain, draw, seasonal_periods, locations)
-    #     seasonal_loc_samples = (
-    #         seasonal_loc_raw_std * seasonal_sigma_loc[:, :, np.newaxis, np.newaxis]
-    #     )
-    # else:
-    #     # Centered parameterization (fallback)
-    #     seasonal_base_samples = idata.posterior[
-    #         "seasonal_base_raw"
-    #     ].values  # (chain, draw, seasonal_periods)
-    #     seasonal_loc_samples = idata.posterior[
-    #         "seasonal_loc_raw"
-    #     ].values  # (chain, draw, seasonal_periods, locations)
-    #
-    # # Flatten chain and draw dimensions
-    # n_chains, n_draws = seasonal_base_samples.shape[:2]
-    # seasonal_base_flat = seasonal_base_samples.reshape(
-    #     n_chains * n_draws, -1
-    # )  # (samples, seasonal_periods)
-    # seasonal_loc_flat = seasonal_loc_samples.reshape(
-    #     n_chains * n_draws, config.seasonal_periods, len(locations)
-    # )
-    #
-    # # Apply zero-sum constraints (as done in the model)
-    # seasonal_base_centered = seasonal_base_flat - np.mean(
-    #     seasonal_base_flat, axis=1, keepdims=True
-    # )
-    # seasonal_loc_centered = seasonal_loc_flat - np.mean(
-    #     seasonal_loc_flat, axis=1, keepdims=True
-    # )
-    #
-    # # Combine base + location-specific effects
-    # total_seasonal = (
-    #     seasonal_base_centered[:, :, np.newaxis] + seasonal_loc_centered
-    # )  # (samples, periods, locations)
-    #
     # # Calculate statistics
     seasonal_mean = np.mean(total_seasonal, axis=0)  # (periods, locations)
     seasonal_q05 = np.percentile(total_seasonal, 5, axis=0)  # 90% CI lower
@@ -631,6 +576,28 @@ def plot_model_components(model_file: str, output_dir: str, config: 'Config'):
 
     print(f"Model component plots saved to directory: {output_dir}")
 
+def plot_horizons(idata):
+    posterior = idata.posterior
+    y = idata.observed_data['y_0'].values
+    n_locations = y.shape[-1]
+    for i in range(n_locations):
+        for h in range(0, 1):
+            median = posterior[f'log_mu_past_{h}'].median(dim=['chain', 'draw']).values[..., i]
+            wo = posterior[f'without_effect'].median(dim=['chain', 'draw']).values[..., i]
+            useq = (
+                posterior[f"u_rw"]
+                .median(dim=["chain", "draw"])
+                .values[..., i]
+            )
+            x = np.arange(len(median))+h
+            plt.plot(x, median, color="y")
+            plt.plot(wo, color="r")
+            plt.plot(useq, color="g")
+        plt.plot(np.log(y[..., i]),
+                 color="b")
+        plt.show()
+
+
 
 def plot_log_space(idata):
     posterior = idata.posterior
@@ -651,10 +618,13 @@ def plot_log_space(idata):
 
 @pytest.fixture
 def idata():
-    model_file = Path(__file__).parent / 'test_runs' / 'true_model'
+    model_file = Path(__file__).parent / 'test_runs' / 'new_model'
     base_name = model_file
     idata_filename = f"{base_name}_idata.nc"
     return az.from_netcdf(idata_filename)
 
 def test_plot_logspace(idata):
     plot_log_space(idata)
+
+def test_plot_horizons(idata):
+    plot_horizons(idata)

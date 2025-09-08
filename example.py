@@ -76,8 +76,8 @@ def prepare_data(args: Config, raw):
 
     # Target (T, L)
     y = to_tensor_panels(panel, time_idx, locs, 'time_period', 'location', 'disease_cases')
-    # if np.isnan(y).any():
-    #    y = safe_impute(y)
+    if np.isnan(y).any():
+        y = safe_impute(y)
     y = np.clip(y, 0, None).astype(int)
     
     # Population (T, L) for offset - only if available
@@ -170,7 +170,7 @@ def format_predictions_from_historic_end(ppc, extended_data_dict, args: Config):
     # Find the y_fut variable (it has a unique ID suffix)
     y_fut_var = None
     for var_name in ppc.prior.data_vars:
-        if var_name.startswith('y_fut_'):
+        if var_name.startswith('y_fut'):
             y_fut_var = var_name
             break
     
@@ -185,12 +185,12 @@ def format_predictions_from_historic_end(ppc, extended_data_dict, args: Config):
     fut_dates = [str(p)[:7] for p in fut_dates]
     
     rows = [
-        [fut_dates[h], locs[l]] + list(fut_Y[h, l, :].values.tolist())
+        [fut_dates[h], locs[l]] + list(fut_Y[..., h, l, :].values.ravel().tolist())
         for h in range(H)
         for l in range(len(locs))
     ]
 
-    sample_names = [f'sample_{i}' for i in range(fut_Y.shape[-1])]
+    sample_names = [f'sample_{i}' for i in range(args.draws*args.chains)]#fut_Y.shape[-1])]
     assert len(sample_names) == args.draws*args.chains, f"Sample count mismatch: expected {args.draws*args.chains}, got {len(sample_names)}"
     col_names = ['time_period', 'location'] + sample_names
     out_df = pd.DataFrame(rows, columns=col_names)
@@ -205,29 +205,43 @@ def on_train(training_data: pd.DataFrame, args: Config= Config()) -> tuple:
     y = data_dict["y"]
     X_std = data_dict["X_std"]
     log_pop_offset = data_dict["log_pop_offset"]
+
     T, L, P, H = data_dict["T"], data_dict["L"], data_dict["P"], data_dict["H"]
 
     # Convert constants to graph tensors
     y_const = y
     Xpast_const = X_std if P else None
     log_pop_offset_const = log_pop_offset
-    month_indices = data_dict["month_indices"]
 
+    month_indices = data_dict["month_indices"]
+    # Add new values for prediction period
+    new_month_indices = (np.arange(args.horizon)+month_indices[-1]+1)%args.seasonal_periods
+    month_indices = np.append(month_indices, new_month_indices)
+    log_pop_offset_future = np.tile(log_pop_offset[-1:, :], (H, 1))
+    log_pop_offset_const = np.concatenate([log_pop_offset_const, log_pop_offset_future])
     with pm.Model() as model:
         # ----- Fixed effects -----
-
         linpast = get_linear_predictor(P, Xpast_const, args)
         seasonal_effects = get_seasonal_effects(L, T, args, month_indices)
         location_effects = get_location_effects(L, args)
-        u_seq = get_rw_effect(L, T)
+        u_seq = get_rw_effect(L, T+args.horizon)
 
         # ----- Observation model: Negative Binomial -----
         alpha = pm.HalfNormal("alpha", 1.0, shape=L)
 
         # Add population offset to the linear predictor before exponentiating
-        log_mu_past = pm.Deterministic('log_mu_past', linpast + seasonal_effects + location_effects + u_seq + pt.as_tensor_variable(log_pop_offset_const))
-        mu_past = pt.exp(log_mu_past)
-        y_like = pm.NegativeBinomial("y", mu=mu_past, alpha=alpha, observed=y_const)
+        without_effect = seasonal_effects + location_effects + u_seq + pt.as_tensor_variable(log_pop_offset_const)
+        pm.Deterministic('without_effect', without_effect)
+        #decay=pm.Beta("decay", 1, 1)
+        for h in range(H+1):
+            log_mu_past = pm.Deterministic(
+                f"log_mu_past_{h}",
+                linpast + without_effect[h:T+h, ...]
+            )
+            mu_past = pt.exp(log_mu_past)
+
+            y_like = pm.NegativeBinomial(
+                f"y_{h}", mu=mu_past[:T-h], alpha=alpha, observed=y_const[h:])
 
         idata = pm.sample(
             draws=args.draws,
@@ -244,8 +258,9 @@ def on_train(training_data: pd.DataFrame, args: Config= Config()) -> tuple:
 
 def get_rw_effect(L, T):
     # ----- Random Walk process for each location -----
-    sigma_rw = pm.HalfNormal("sigma_rw", 1.0)
+    sigma_rw = pm.HalfNormal("sigma_rw", 0.1)
     u_seq = pm.GaussianRandomWalk("u_rw",
+                                  init_dist=pm.Normal.dist(0, 1),
                                   sigma=sigma_rw,
                                   shape=(T, L))
     return u_seq
@@ -325,7 +340,7 @@ def get_non_centered_seasonal(L, args):
 
 def get_linear_predictor(P, Xpast_const, args):
     intercept = pm.Normal("intercept", 0.0, 5.0)
-    beta_sigma = args.beta_prior_sigma if args.use_seasonal_effects else 1.0
+    beta_sigma = args.beta_prior_sigma
     beta = pm.Normal("beta", 0.0, beta_sigma, shape=P)
     linpast = intercept + pt.tensordot(
         pt.as_tensor_variable(Xpast_const), beta, axes=[2, 0]
@@ -334,15 +349,43 @@ def get_linear_predictor(P, Xpast_const, args):
 
 
 
+def new_predict(model_and_data, args: Config):
+    model, idata, data_dict, args = model_and_data
+    posterior = idata.posterior
+    vs = []
+    for h in range(1, args.horizon+1):
+        vs.append(posterior[f'log_mu_past_{h}'].values[..., [-1], :]) #Last time point
+    log_mu_future = np.concatenate(vs, axis=-2)
+    alpha = posterior['alpha'].values[..., None, :]
+    with pm.Model() as pred_model:
+        # Get parameter values from posterior
+
+        mu_future = pt.exp(log_mu_future)
+        y_fut = pm.NegativeBinomial(f"y_fut",
+                                    mu=mu_future,
+                                    alpha=alpha)
+
+        # Sample from the prediction model
+        ppc = pm.sample_prior_predictive(draws=1)
+
+    return ppc
+
+
 def on_predict(model_and_data: tuple, historic_data: pd.DataFrame, args: Config= Config()) -> pd.DataFrame:
     '''Use trained model parameters to predic t from the end of historic_data'''
     # Unpack the training results
     #if DO_TRAIN:
     model, idata, data_dict, args = model_and_data
+    extended_data_dict = prepare_extended_data(data_dict, historic_data, args)
+    ppc = new_predict(model_and_data, args)
+    result_df = format_predictions_from_historic_end(ppc, extended_data_dict, args)
+    return result_df
+
+
     #else:
 
     # Prepare extended data that includes historic observations
-    extended_data_dict = prepare_extended_data(data_dict, historic_data, args)
+
     
     # Get dimensions
     T_orig, L, P, H = data_dict["T"], data_dict["L"], data_dict["P"], data_dict["H"]
@@ -540,7 +583,6 @@ def plot_components(model: str,
                    model_config: str,
                    output_dir: str = "model_components"):
     """Create specialized plots of model components from posterior samples."""
-    
     config = load_config(model_config)
     plot_model_components(model, output_dir, config)
 
