@@ -1,0 +1,12 @@
+python: 3.11.3
+build_dependencies:
+  - pip
+  - setuptools
+  - wheel
+dependencies:
+  - pandas
+  - matplotlib
+  - numpy
+  - pymc
+  - cyclopts
+  - pytest

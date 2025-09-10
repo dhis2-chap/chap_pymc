@@ -1,11 +1,12 @@
+from pathlib import Path
+
 import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
 import pymc as pm
 import cyclopts
-import arviz as az
-import altair
 import pytest
+from pandas import DataFrame
 
 
 def main():
@@ -38,6 +39,9 @@ def create_data_arrays(df: pd.DataFrame, horizon=3):
         extra_offset = extra_offset if extra_offset <= horizon else 0
         for i in range(len(ds) // 12):
             year_data = ds[cutoff_month_index + i * 12:cutoff_month_index + (i+1) * 12+extra_offset]
+            missing = 12+extra_offset-len(year_data)
+            if missing > 0:
+                year_data = np.append(year_data, [np.nan]*missing)
             year_data_per_loc.append(year_data)
             normalized = (year_data - year_data[:12].mean()) / max(year_data[:12].std(), 0.001)
             normies.append(normalized)
@@ -61,10 +65,10 @@ def create_data_arrays(df: pd.DataFrame, horizon=3):
         # plt.plot( group['disease_cases'])
         plt.title(location)
         #plt.show()
-    return np.array(all_means), np.array(all_stds), np.array(full_year_data)
+    return np.array(all_means), np.array(all_stds), np.array(full_year_data),missing+3
 
 
-def make_model(all_means: 'L, M', all_stds, full_year_data: 'loc, year, month'):
+def make_model(all_means: 'L, M', all_stds, full_year_data: 'loc, year, month', missing:int=0):
     L, Y, M = full_year_data.shape
     train_data = full_year_data[:, :-1, :]
     test_data = full_year_data[:, -1:, :]
@@ -80,30 +84,32 @@ def make_model(all_means: 'L, M', all_stds, full_year_data: 'loc, year, month'):
         pred_means = pm.Deterministic('pred_mean', normalized * yearly_std+yearly_mean)
 
         pm.Normal('train_obs', mu=pred_means[:, :-1, :], sigma=0.1, observed=train_data)
-        seen_months = 12
+        seen_months = M-missing
         pm.Normal('test_obs', mu=pred_means[:, -1:, :seen_months], sigma=0.1, observed=test_data[:, :, :seen_months])
         idata = pm.sample(
-            draws=25,
+            draws=500,
             chains=4,
-            tune=10,
+            tune=500,
             progressbar=True)
 
     return idata
 
-def create_output(training_pdf, posterior_samples, horizon=3, n_samples=100):
+def create_output(training_pdf, posterior_samples, horizon=3, n_samples=100, missing=3):
     locations = training_pdf['location'].unique()
     last_time_idx = training_pdf['time_period'].max()
     year, month = map(int, last_time_idx.split('-'))
-    raw_months = np.arange(1, horizon+1)+month
-    new_months = raw_months %12
-    new_years = year + new_months//12
+    raw_months = np.arange(horizon)+month
+    new_months = (raw_months % 12)+1
+    new_years = year + raw_months//12
+    print(year, raw_months, new_months, new_years)
     new_time_periods = [f'{y:d}-{m:02d}' for y, m in zip(new_years, new_months)]
     colnames = ['location', 'time_period'] + [f'sample_{i}' for i in range(n_samples)]
     rows =  []
     M = posterior_samples.shape[-2]
+    posterior_samples = np.expm1(posterior_samples)
     for l_id, location in enumerate(locations):
         for t_id, time_period in enumerate(new_time_periods):
-            samples = posterior_samples[l_id, -1, M-horizon+t_id, -n_samples:]
+            samples = posterior_samples[l_id, -1, M-missing+t_id, -n_samples:]
             new_row = [location, time_period] + samples.tolist()
             rows.append(new_row)
 
@@ -132,15 +138,22 @@ def posterior_samples():
 def training_df():
     return pd.read_csv('/Users/knutdr/Downloads/dataset2/training_data.csv')
 
+@pytest.fixture(scope='module')
+def training_df2():
+    return pd.read_csv(Path(__file__).parent.parent/'test_data'/'training_data.csv')
+
+def test_inhomog_create(training_df2):
+    create_data_arrays(training_df2)
+
 def test_output_predictions(training_df, posterior_samples):
     create_output(training_df,posterior_samples)
 
 
 def test_make_data(training_df):
-    all_means, all_stds, full_year_data = create_data_arrays(training_df)
-    idata = make_model(all_means, all_stds, full_year_data)
+    all_means, all_stds, full_year_data,missing = create_data_arrays(training_df)
+    idata = make_model(all_means, all_stds, full_year_data, missing)
     posterior_samples = idata.posterior['pred_mean'].stack(dim={'samples':('draw', 'chain')}).values
-    return create_output(training_df, posterior_samples)
+    return create_output(training_df, posterior_samples, missing)
 
 app = cyclopts.App()
 
@@ -155,11 +168,16 @@ def predict(model: str,
             out_file: str,
             model_config: str | None = None):
     training_df = pd.read_csv(historic_data)
-    all_means, all_stds, full_year_data = create_data_arrays(training_df)
-    idata = make_model(all_means, all_stds, full_year_data)
-    posterior_samples = idata.posterior['pred_mean'].stack(dim={'samples':('draw', 'chain')}).values
-    predictions = create_output(training_df, posterior_samples)
+    predictions = get_predictions(training_df)
     predictions.to_csv(out_file, index=False)
+
+
+def get_predictions(training_df: DataFrame) -> DataFrame:
+    all_means, all_stds, full_year_data, missing = create_data_arrays(training_df)
+    idata = make_model(all_means, all_stds, full_year_data,missing=missing)
+    posterior_samples = idata.posterior['pred_mean'].stack(dim={'samples': ('draw', 'chain')}).values
+    predictions = create_output(training_df, posterior_samples,missing=missing)
+    return predictions
 
 
 if __name__ == '__main__':
