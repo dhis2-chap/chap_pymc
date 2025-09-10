@@ -487,6 +487,7 @@ app = cyclopts.App()
 
 @app.command()
 def train(train_data: str, model: str, model_config: str, force=False):
+
     if (not DO_TRAIN) and not force:
         return
     config = load_config(model_config)

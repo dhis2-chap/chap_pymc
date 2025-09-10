@@ -33,6 +33,7 @@ dependencies = [
     "arviz>=0.15.0",
     "cyclopts>=2.0.0",
     "pyyaml>=6.0",
+    "altair"
 ]
 
 [project.optional-dependencies]
