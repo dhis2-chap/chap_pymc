@@ -83,21 +83,5 @@ entry_points:
       future_data: str
       out_file: str
       model_config: str
-  plot:
-    command: python example.py plot {model} {train_data} {historic_data} {predictions} 
-      {model_config} {output} {plot_params}
-    parameters:
-      model: str
-      train_data: str
-      historic_data: str
-      predictions: str
-      model_config: str
-      output: str
-      plot_params: bool
-  plot-components:
-    command: python example.py plot-components {model} {model_config} {output_dir}
-    parameters:
-      model: str
-      model_config: str
-      output_dir: str
+
 python_env: pyenv.yaml
