@@ -178,6 +178,57 @@ def analyze_data(df: pd.DataFrame):
     )
     
     st.altair_chart(faceted_chart, use_container_width=True)
+    
+    # Standard deviation plot for each month/season by location
+    st.subheader("Monthly Standard Deviations by Location")
+    
+    # Calculate standard deviations for each location and season
+    monthly_std = df.groupby(['location', 'season']).agg({
+        'log1p': 'std',
+        'log1p_normalized': 'std', 
+        'fully_normalized': 'std',
+        'fully_normalized_detrended': 'std'
+    }).reset_index()
+    
+    # Rename columns for clarity
+    monthly_std.columns = ['location', 'season', 'log1p_std', 'normalized_std', 'pattern_std', 'detrended_std']
+    
+    # Create long format for the standard deviations
+    std_long = pd.melt(
+        monthly_std,
+        id_vars=['location', 'season'],
+        value_vars=['log1p_std', 'normalized_std', 'pattern_std', 'detrended_std'],
+        var_name='std_type',
+        value_name='std_value'
+    )
+    
+    # Create readable labels
+    std_labels = {
+        'log1p_std': 'Log1p Std',
+        'normalized_std': 'Normalized Std',
+        'pattern_std': 'Pattern Norm Std',
+        'detrended_std': 'Detrended Std'
+    }
+    std_long['std_label'] = std_long['std_type'].map(std_labels)
+    
+    # Create standard deviation chart
+    std_chart = alt.Chart(std_long).mark_line(
+        point=True, strokeWidth=2
+    ).encode(
+        x=alt.X('season:O', title='Season (Month from Minimum)', scale=alt.Scale(domain=list(range(12)))),
+        y=alt.Y('std_value:Q', title='Standard Deviation'),
+        color=alt.Color('std_label:N', legend=alt.Legend(title="Std Type")),
+        tooltip=['season:O', 'std_value:Q', 'std_label:N', 'location:N']
+    ).properties(
+        width=200,
+        height=150
+    ).facet(
+        row=alt.Row('location:N', title='Location')
+    ).resolve_scale(
+        y='independent'
+    )
+    
+    st.altair_chart(std_chart, use_container_width=True)
 
     for location_idx, location in enumerate(locations):
         st.subheader(f"Location: {location}")
