@@ -4,6 +4,7 @@ import altair as alt
 import numpy as np
 import sys
 from pathlib import Path
+from sklearn.linear_model import LinearRegression
 
 sys.path.append(str(Path(__file__).parent.parent))
 from per_season.yearly_pattern import create_data_arrays
@@ -16,41 +17,51 @@ def main():
     st.title("Season Standardization Analysis")
     st.markdown("Interactive visualization of seasonal disease patterns and normalization")
     
-    uploaded_file = st.file_uploader("Choose a CSV file", type="csv")
+    # Try to auto-load sample data
+    sample_path = "/Users/knutdr/Downloads/dataset2/training_data.csv"
+    df = None
+    
+    if Path(sample_path).exists():
+        try:
+            df = pd.read_csv(sample_path)
+            st.success(f"Sample data auto-loaded! Shape: {df.shape}")
+            st.info("Analysis generated automatically with sample data. You can upload your own data below to override.")
+        except Exception as e:
+            st.warning(f"Could not load sample data: {str(e)}")
+    
+    # File uploader for custom data
+    uploaded_file = st.file_uploader("Upload your own CSV file to override sample data", type="csv")
     
     if uploaded_file is not None:
         try:
             df = pd.read_csv(uploaded_file)
-            st.success(f"Data loaded successfully! Shape: {df.shape}")
-            
-            if st.button("Generate Analysis"):
-                with st.spinner("Processing data and generating plots..."):
-                    analyze_data(df)
-                    
+            st.success(f"Custom data loaded successfully! Shape: {df.shape}")
         except Exception as e:
-            st.error(f"Error loading data: {str(e)}")
+            st.error(f"Error loading uploaded data: {str(e)}")
+            df = None
+    
+    # Generate analysis if we have data
+    if df is not None:
+        with st.spinner("Processing data and generating plots..."):
+            try:
+                analyze_data(df)
+            except Exception as e:
+                st.error(f"Error during analysis: {str(e)}")
+                st.exception(e)
     else:
-        st.info("Please upload a CSV file to begin analysis")
-        
-        if st.checkbox("Use sample data"):
-            sample_path = "/Users/knutdr/Downloads/dataset2/training_data.csv"
-            if Path(sample_path).exists():
-                df = pd.read_csv(sample_path)
-                st.success(f"Sample data loaded! Shape: {df.shape}")
-                
-                if st.button("Generate Analysis with Sample Data"):
-                    with st.spinner("Processing data and generating plots..."):
-                        analyze_data(df)
-            else:
-                st.warning("Sample data file not found")
+        st.warning("No data available for analysis. Please check that sample data exists or upload a CSV file.")
 
 def analyze_data(df: pd.DataFrame):
     st.subheader("Data Overview")
     st.dataframe(df.head())
     
+    # Prepare the DataFrame with additional columns
+    df = df.copy()
     df['log1p'] = np.log1p(df['disease_cases'])
-    month_index = df['time_period'].apply(lambda x: int(x.split('-')[1]))
-    df['month'] = month_index
+    df['month'] = df['time_period'].apply(lambda x: int(x.split('-')[1])-1)
+    df['year'] = df['time_period'].apply(lambda x: int(x.split('-')[0]))
+    
+    # Find minimum month
     means = ((month, group['disease_cases'].mean()) for month, group in df.groupby('month'))
     min_month, val = min(means, key=lambda x: x[1])
     
@@ -59,170 +70,211 @@ def analyze_data(df: pd.DataFrame):
     
     horizon = st.slider("Forecast Horizon", min_value=1, max_value=12, value=3)
     
-    all_means = []
-    all_stds = []
-    full_year_data = []
+    # Add season column (month - min_month, wrapped)
+    assert df['month'].max()==11
+    df['season'] = ((df['month'] - min_month) % 12)
+    
+    # Create season_idx (year index starting from min_month)
+    df['season_idx'] = df['year'] + df['month']//12
+    df['season_idx'] -= df['season_idx'].min()
+    # Calculate means and stds for each location x season_idx
+    season_stats = df.groupby(['location', 'season_idx'])['log1p'].agg(['mean', 'std']).reset_index()
+    season_stats.columns = ['location', 'season_idx', 'season_mean', 'season_std']
+    
+    # Merge back to main dataframe
+    df = df.merge(season_stats, on=['location', 'season_idx'], how='left')
+    
+    # Add normalized values column: (log1p - season_mean) / season_std
+    df['log1p_location_normalized'] = df['log1p'] - df['season_mean']
+
+
+    df['log1p_normalized'] = (df['log1p_location_normalized']) / df['season_std'].clip(lower=0.001)
+    
+    # Calculate seasonal pattern means and stds for each location
+    seasonal_pattern_stats = df.groupby(['location', 'season'])['log1p_normalized'].agg(['mean', 'std']).reset_index()
+    seasonal_pattern_stats.columns = ['location', 'season', 'pattern_mean', 'pattern_std']
+    
+    # Merge seasonal pattern stats
+    df = df.merge(seasonal_pattern_stats, on=['location', 'season'], how='left')
+    
+    # Add fully normalized values: (log1p_normalized - pattern_mean) / pattern_std
+    df['fully_normalized'] = ((df['log1p_normalized'] - df['pattern_mean']) / 
+                             df['pattern_std'].clip(lower=0.001))
+    
+    # Estimate linear trends for fully_normalized over season for each location
+    df['linear_trend'] = np.nan
+    df['fully_normalized_detrended'] = np.nan
+    
+    for location in df['location'].unique():
+        for season_idx in df['season_idx'].unique():
+            iter_mask = (df['location'] == location) & (df['season_idx'] == season_idx)
+            location_data = df[iter_mask].copy()
+
+            # Prepare data for linear regression on fully_normalized data
+            X = location_data['season'].values.reshape(-1, 1)
+            y = location_data['fully_normalized'].values
+
+            # Remove any NaN values
+            valid_mask = ~np.isnan(y)
+            if valid_mask.sum() > 1:  # Need at least 2 points for linear regression
+                X_valid = X[valid_mask]
+                y_valid = y[valid_mask]
+
+                # Fit linear regression
+                model = LinearRegression()
+                model.fit(X_valid, y_valid)
+
+                # Predict linear trend for all seasons
+                trend_predictions = model.predict(X)
+                df.loc[iter_mask, 'linear_trend'] = trend_predictions
+                df.loc[iter_mask, 'fully_normalized_detrended'] = location_data['fully_normalized'] - trend_predictions
+
+    
+    st.subheader("Enhanced Data Overview")
+    st.dataframe(df[['location', 'time_period', 'season', 'season_idx', 'log1p', 
+                     'season_mean', 'season_std', 'log1p_normalized', 
+                     'pattern_mean', 'pattern_std', 'fully_normalized', 'linear_trend', 'fully_normalized_detrended']].head())
     
     locations = df['location'].unique()
     
-    for location_idx, (location, group) in enumerate(df.groupby('location')):
+    # Create long format DataFrame for normalization stages
+    st.subheader("Comparison: Unnormalized → Location Normalized → Standardized → Pattern Normalized → Detrended")
+    
+    # Reshape to long format
+    df_long = pd.melt(
+        df, 
+        id_vars=['location', 'time_period', 'season', 'season_idx'],
+        value_vars=['log1p', 'log1p_location_normalized', 'log1p_normalized', 'fully_normalized', 'fully_normalized_detrended'],
+        var_name='normalization_stage',
+        value_name='value'
+    )
+    
+    # Create more readable stage names
+    stage_labels = {
+        'log1p': 'Unnormalized',
+        'log1p_location_normalized': 'Location Normalized', 
+        'log1p_normalized': 'Standardized',
+        'fully_normalized': 'Pattern Normalized',
+        'fully_normalized_detrended': 'Detrended'
+    }
+    df_long['stage_label'] = df_long['normalization_stage'].map(stage_labels)
+    
+    # Create single chart with column faceting
+    faceted_chart = alt.Chart(df_long).mark_line(
+        point=True, opacity=0.7
+    ).encode(
+        x=alt.X('season:O', title='Season', scale=alt.Scale(domain=list(range(12)))),
+        y=alt.Y('value:Q', title='Value'),
+        color=alt.Color('season_idx:N', legend=alt.Legend(title="Season Year")),
+        tooltip=['season:O', 'value:Q', 'season_idx:N', 'time_period:N', 'stage_label:N']
+    ).properties(
+        width=200,
+        height=150
+    ).facet(
+        column=alt.Column('stage_label:N', title='Normalization Stage', sort=['Unnormalized', 'Location Normalized', 'Standardized', 'Pattern Normalized', 'Detrended']),
+        row=alt.Row('location:N', title='Location')
+    ).resolve_scale(
+        y='independent'
+    )
+    
+    st.altair_chart(faceted_chart, use_container_width=True)
+
+    for location_idx, location in enumerate(locations):
         st.subheader(f"Location: {location}")
         
-        group = group.copy()
-        group['log1p'] = group['log1p'].interpolate()
-        cutoff_month_index = np.flatnonzero(df['month'] == min_month)[0]
-        extra_offset = (len(group)-cutoff_month_index+horizon)%12
-        ds = group['log1p'].values
+        location_data = df[df['location'] == location].copy()
         
-        if np.isnan(ds).any() or np.isinf(ds).any():
-            st.warning(f"Data quality issues found in {location}")
-            continue
+        # Create charts using the DataFrame structure
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            # Normalized data chart
+            norm_chart = alt.Chart(location_data).mark_line(
+                point=True, opacity=0.7
+            ).encode(
+                x=alt.X('season:O', title='Season (Month from Minimum)', scale=alt.Scale(domain=list(range(12)))),
+                y=alt.Y('log1p_normalized:Q', title='Normalized Disease Cases'),
+                color=alt.Color('season_idx:N', legend=alt.Legend(title="Season Year")),
+                tooltip=['season:O', 'log1p_normalized:Q', 'season_idx:N', 'time_period:N']
+            ).properties(
+                title=f'{location} - Normalized Data',
+                width=400,
+                height=300
+            )
             
-        ds = np.append(ds, [np.nan]*horizon)
-        normies = []
-        year_data_per_loc = []
-        extra_offset = extra_offset if extra_offset <= horizon else 0
+            st.altair_chart(norm_chart, use_container_width=True)
         
-        norm_chart_data = []
-        
-        for i in range(len(ds) // 12):
-            year_data = ds[cutoff_month_index + i * 12:cutoff_month_index + (i+1) * 12+extra_offset]
-            missing = 12+extra_offset-len(year_data)
-            if missing > 0:
-                year_data = np.append(year_data, [np.nan]*missing)
-            year_data_per_loc.append(year_data)
-            normalized = (year_data - year_data[:12].mean()) / max(year_data[:12].std(), 0.001)
-            normies.append(normalized)
+        with col2:
+            # Fully normalized data chart
+            full_norm_chart = alt.Chart(location_data).mark_line(
+                opacity=0.7
+            ).encode(
+                x=alt.X('season:O', title='Season (Month from Minimum)', scale=alt.Scale(domain=list(range(12)))),
+                y=alt.Y('fully_normalized:Q', title='Fully Normalized Cases'),
+                color=alt.Color('season_idx:N', legend=alt.Legend(title="Season Year")),
+                tooltip=['season:O', 'fully_normalized:Q', 'season_idx:N', 'time_period:N']
+            ).properties(
+                title=f'{location} - Fully Normalized',
+                width=400,
+                height=300
+            )
             
-            for month_idx, value in enumerate(normalized):
-                if not np.isnan(value):
-                    norm_chart_data.append({
-                        'Month': month_idx,
-                        'Value': value,
-                        'Year': f'Year {i+1}',
-                        'Type': 'Normalized'
-                    })
+            st.altair_chart(full_norm_chart, use_container_width=True)
         
-        year_data_per_loc = np.array(year_data_per_loc)
-        full_year_data.append(year_data_per_loc)
-        normies = np.array(normies)
-        means = np.nanmean(normies, axis=0)
-        stds = np.nanstd(normies, axis=0)
+        # Seasonal pattern with confidence bands
+        pattern_stats = location_data.groupby('season').agg({
+            'pattern_mean': 'first',
+            'pattern_std': 'first'
+        }).reset_index()
         
-        if np.isnan(means).any() or np.isnan(stds).any():
-            st.warning(f"Standardization issues found in {location}")
-            continue
-            
-        all_means.append(means)
-        all_stds.append(stds)
-        fully_norm = (normies-means)/stds
+        # Create confidence band data
+        pattern_stats['upper'] = pattern_stats['pattern_mean'] + pattern_stats['pattern_std']
+        pattern_stats['lower'] = pattern_stats['pattern_mean'] - pattern_stats['pattern_std']
         
-        # Add fully normalized data to chart data
-        for i, fn in enumerate(fully_norm):
-            for month_idx, value in enumerate(fn):
-                if not np.isnan(value):
-                    norm_chart_data.append({
-                        'Month': month_idx,
-                        'Value': value,
-                        'Year': f'Year {i+1}',
-                        'Type': 'Fully Normalized'
-                    })
-        
-        # Create Altair charts
-        if norm_chart_data:
-            chart_df = pd.DataFrame(norm_chart_data)
-            
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                norm_chart = alt.Chart(chart_df[chart_df['Type'] == 'Normalized']).mark_line(
-                    point=True, opacity=0.7
-                ).add_selection(
-                    alt.selection_multi(fields=['Year'])
-                ).encode(
-                    x=alt.X('Month:O', title='Month'),
-                    y=alt.Y('Value:Q', title='Normalized Disease Cases'),
-                    color=alt.Color('Year:N', legend=alt.Legend(title="Year")),
-                    tooltip=['Month:O', 'Value:Q', 'Year:N']
-                ).properties(
-                    title=f'{location} - Normalized Data',
-                    width=400,
-                    height=300
-                ).resolve_scale(color='independent')
-                
-                st.altair_chart(norm_chart, use_container_width=True)
-            
-            with col2:
-                full_norm_chart = alt.Chart(chart_df[chart_df['Type'] == 'Fully Normalized']).mark_line(
-                    opacity=0.7
-                ).add_selection(
-                    alt.selection_multi(fields=['Year'])
-                ).encode(
-                    x=alt.X('Month:O', title='Month'),
-                    y=alt.Y('Value:Q', title='Fully Normalized Cases'),
-                    color=alt.Color('Year:N', legend=alt.Legend(title="Year")),
-                    tooltip=['Month:O', 'Value:Q', 'Year:N']
-                ).properties(
-                    title=f'{location} - Fully Normalized',
-                    width=400,
-                    height=300
-                ).resolve_scale(color='independent')
-                
-                st.altair_chart(full_norm_chart, use_container_width=True)
-        
-        # Create seasonal pattern chart data
-        seasonal_data = []
-        months = range(len(means))
-        for month in months:
-            seasonal_data.extend([
-                {'Month': month, 'Value': means[month], 'Type': 'Mean'},
-                {'Month': month, 'Value': means[month] + stds[month], 'Type': 'Upper'},
-                {'Month': month, 'Value': means[month] - stds[month], 'Type': 'Lower'}
-            ])
-        
-        seasonal_df = pd.DataFrame(seasonal_data)
-        
-        # Create confidence band
-        band = alt.Chart(seasonal_df[seasonal_df['Type'].isin(['Upper', 'Lower'])]).mark_area(
+        # Confidence band
+        band = alt.Chart(pattern_stats).mark_area(
             opacity=0.3,
             color='lightblue'
         ).encode(
-            x=alt.X('Month:O'),
-            y=alt.Y('Value:Q', scale=alt.Scale(zero=False)),
-            y2='Value:Q'
-        ).transform_pivot(
-            'Type', 'Value', groupby=['Month']
-        ).transform_calculate(
-            y='datum.Lower',
-            y2='datum.Upper'
+            x=alt.X('season:O', title='Season (Month from Minimum)'),
+            y=alt.Y('lower:Q', title='Pattern Value'),
+            y2=alt.Y2('upper:Q')
         )
         
         # Mean line
-        mean_line = alt.Chart(seasonal_df[seasonal_df['Type'] == 'Mean']).mark_line(
+        mean_line = alt.Chart(pattern_stats).mark_line(
             color='black', 
             strokeWidth=3
         ).encode(
-            x=alt.X('Month:O', title='Month'),
-            y=alt.Y('Value:Q', title='Normalized Disease Cases', scale=alt.Scale(zero=False)),
-            tooltip=['Month:O', 'Value:Q']
+            x=alt.X('season:O'),
+            y=alt.Y('pattern_mean:Q'),
+            tooltip=['season:O', 'pattern_mean:Q', 'pattern_std:Q']
         )
         
         # Upper and lower bounds
-        bounds = alt.Chart(seasonal_df[seasonal_df['Type'].isin(['Upper', 'Lower'])]).mark_line(
+        upper_line = alt.Chart(pattern_stats).mark_line(
             strokeDash=[5, 5],
-            color='black',
+            color='gray',
             opacity=0.7
         ).encode(
-            x=alt.X('Month:O'),
-            y=alt.Y('Value:Q'),
-            color=alt.Color('Type:N', scale=alt.Scale(range=['gray', 'gray']), legend=None)
+            x=alt.X('season:O'),
+            y=alt.Y('upper:Q')
         )
         
-        seasonal_chart = (band + mean_line + bounds).properties(
+        lower_line = alt.Chart(pattern_stats).mark_line(
+            strokeDash=[5, 5],
+            color='gray',
+            opacity=0.7
+        ).encode(
+            x=alt.X('season:O'),
+            y=alt.Y('lower:Q')
+        )
+        
+        seasonal_chart = (band + mean_line + upper_line + lower_line).properties(
             title=f'{location} - Seasonal Pattern (Mean ± Std)',
             width=600,
             height=350
-        ).resolve_scale(y='shared')
+        )
         
         st.altair_chart(seasonal_chart, use_container_width=True)
         
@@ -232,59 +284,50 @@ def analyze_data(df: pd.DataFrame):
                 st.info(f"Showing first 5 locations. {remaining} more locations available.")
             break
     
-    if all_means and all_stds:
-        st.subheader("Summary Statistics")
-        all_means_arr = np.array(all_means)
-        all_stds_arr = np.array(all_stds)
+    # Create summary comparison charts
+    st.subheader("Summary Statistics")
+    
+    # Get pattern statistics for all locations
+    pattern_summary = df.groupby(['location', 'season']).agg({
+        'pattern_mean': 'first',
+        'pattern_std': 'first'
+    }).reset_index()
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        means_chart = alt.Chart(pattern_summary).mark_line(
+            opacity=0.8, strokeWidth=2
+        ).encode(
+            x=alt.X('season:O', title='Season (Month from Minimum)', scale=alt.Scale(domain=list(range(12)))),
+            y=alt.Y('pattern_mean:Q', title='Mean Normalized Cases'),
+            color=alt.Color('location:N', legend=alt.Legend(title="Location")),
+            tooltip=['season:O', 'pattern_mean:Q', 'location:N']
+        ).properties(
+            title='Seasonal Means by Location',
+            width=400,
+            height=350
+        )
         
-        # Create summary data for Altair
-        summary_data = []
-        for i, (means, stds, location) in enumerate(zip(all_means_arr, all_stds_arr, locations[:len(all_means_arr)])):
-            for month, (mean_val, std_val) in enumerate(zip(means, stds)):
-                summary_data.extend([
-                    {'Month': month, 'Value': mean_val, 'Location': location, 'Metric': 'Mean'},
-                    {'Month': month, 'Value': std_val, 'Location': location, 'Metric': 'Std Dev'}
-                ])
+        st.altair_chart(means_chart, use_container_width=True)
+    
+    with col2:
+        stds_chart = alt.Chart(pattern_summary).mark_line(
+            opacity=0.8, strokeWidth=2
+        ).encode(
+            x=alt.X('season:O', title='Season (Month from Minimum)', scale=alt.Scale(domain=list(range(12)))),
+            y=alt.Y('pattern_std:Q', title='Std Dev Normalized Cases'),
+            color=alt.Color('location:N', legend=alt.Legend(title="Location")),
+            tooltip=['season:O', 'pattern_std:Q', 'location:N']
+        ).properties(
+            title='Seasonal Standard Deviations by Location',
+            width=400,
+            height=350
+        )
         
-        summary_df = pd.DataFrame(summary_data)
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            means_chart = alt.Chart(summary_df[summary_df['Metric'] == 'Mean']).mark_line(
-                opacity=0.8, strokeWidth=2
-            ).encode(
-                x=alt.X('Month:O', title='Month'),
-                y=alt.Y('Value:Q', title='Mean Normalized Cases'),
-                color=alt.Color('Location:N', legend=alt.Legend(title="Location")),
-                tooltip=['Month:O', 'Value:Q', 'Location:N']
-            ).properties(
-                title='Seasonal Means by Location',
-                width=400,
-                height=350
-            )
-            
-            st.altair_chart(means_chart, use_container_width=True)
-        
-        with col2:
-            stds_chart = alt.Chart(summary_df[summary_df['Metric'] == 'Std Dev']).mark_line(
-                opacity=0.8, strokeWidth=2
-            ).encode(
-                x=alt.X('Month:O', title='Month'),
-                y=alt.Y('Value:Q', title='Std Dev Normalized Cases'),
-                color=alt.Color('Location:N', legend=alt.Legend(title="Location")),
-                tooltip=['Month:O', 'Value:Q', 'Location:N']
-            ).properties(
-                title='Seasonal Standard Deviations by Location',
-                width=400,
-                height=350
-            )
-            
-            st.altair_chart(stds_chart, use_container_width=True)
-        
-        st.success("Analysis complete!")
-    else:
-        st.error("No valid data processed. Please check your data format.")
+        st.altair_chart(stds_chart, use_container_width=True)
+    
+    st.success("Analysis complete!")
 
 if __name__ == "__main__":
     main()
