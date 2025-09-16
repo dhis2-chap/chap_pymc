@@ -4,14 +4,37 @@ import altair as alt
 import numpy as np
 import pandas as pd
 import pytest
-from altair import FacetChart
+from altair import FacetChart, HConcatChart
+
 alt.data_transformers.enable('vegafusion')
 alt.renderers.enable('browser')
 #alt.renderers.enable('notebook')
 
+def temperature_transform(x):
+    """
+    Transforming function f(x) that:
+    - Is low (around 0) until 15
+    - Starts growing with highest growth around 25
+    - Plateaus at 30
+
+    Uses a sigmoid-like function with shifted center and scaling
+    """
+    return 1 / (1 + np.exp(-0.5 * (x - 25)))
+
 class DatasetPlot(ABC):
     def __init__(self, df: pd.DataFrame):
+        df['ideal_temperature'] = temperature_transform(df['mean_temperature'])
         self._df = df
+
+
+
+    def _get_colnames(self) -> filter:
+        colnames = filter(lambda name: name not in ('disease_cases', 'location', 'time_period') and not name.startswith('Unnamed'), self._df.columns)
+        colnames = filter(lambda name: self._df[name].dtype.name in ('float64', 'int64', 'bool', 'int32', 'float32'), colnames)
+        print(self._df.columns)
+        colnames = list(colnames)
+        print(colnames)
+        return colnames
 
     @abstractmethod
     def plot(self) -> alt.Chart:
@@ -31,6 +54,7 @@ class StandardizedFeaturePlot(DatasetPlot):
     def __init__(self, df: pd.DataFrame, selected_features=None):
         super().__init__(df)
         self.selected_features = selected_features
+
     def _standardize(self, col: np.array) -> np.array:
         # Handle NaN values properly
         mean_val = np.nanmean(col)
@@ -67,12 +91,9 @@ class StandardizedFeaturePlot(DatasetPlot):
             # Return empty dataframe with correct structure
             return pd.DataFrame(columns=['time_period', 'location', 'value', 'feature'])
 
-    def _get_colnames(self) -> filter:
-        colnames = filter(lambda name: name not in ('disease_cases', 'location', 'time_period') and not name.startswith('Unnamed'), self._df.columns)
-        colnames = filter(lambda name: self._df[name].dtype.name in ('float64', 'int64'), colnames)
-        return colnames
 
-    def plot(self) -> FacetChart:
+
+    def plot(self) -> HConcatChart:
         data = self.data()
         
         # Filter data based on selected features if specified
@@ -127,16 +148,12 @@ class StandardizedFeaturePlot(DatasetPlot):
             title="Multiple Feature Selection (Click legend items to toggle)"
         )
 
-
-@pytest.fixture
-def df() -> pd.DataFrame:
-    p = Path(__file__).parent.parent/ 'test_data' / 'training_data.csv'
-    return pd.read_csv(p)
-
-
-
 def test_standardized_feature_plot(df: pd.DataFrame):
+    df['ideal_temperature'] = (df['mean_temperature'] > 25) & (df['mean_temperature']<= 30)  # Assuming mean_temperature is the predictor
+    df['ideal_temperature'] = df['ideal_temperature'].astype(int)
+     # Convert boolean to int for plotting
     plotter = StandardizedFeaturePlot(df)
+
     data = plotter.data()
     print(data.head())
     print(f"Data shape: {data.shape}")
@@ -149,3 +166,14 @@ def test_standardized_feature_plot(df: pd.DataFrame):
     chart = plotter.plot()
     chart.save('standardized_feature_plot.html')
     print("Chart saved to standardized_feature_plot.html")
+
+def test_temperature_transform():
+    temps = np.arange(35)
+    transformed = temperature_transform(temps)
+    df = pd.DataFrame({'mean_temperature': temps, 'ideal_temperature': transformed})
+    alt.Chart(df).mark_line().encode(
+        x='mean_temperature',
+        y='ideal_temperature'
+    ).properties(
+        title='Temperature Transformation'
+    ).save('temperature_transform.html')
