@@ -5,9 +5,11 @@ import numpy as np
 import sys
 from pathlib import Path
 from sklearn.linear_model import LinearRegression
+from sklearn.preprocessing import MinMaxScaler
 
 sys.path.append(str(Path(__file__).parent.parent))
 from per_season.yearly_pattern import create_data_arrays
+from chap_pymc.dataset_plots import StandardizedFeaturePlot
 
 alt.data_transformers.enable('json')
 
@@ -53,11 +55,125 @@ def main():
 
 def analyze_data(df: pd.DataFrame):
     st.subheader("Data Overview")
-    st.dataframe(df.head())
+    st.dataframe(df.head(n=100))
+    
+    # Standardized Feature Plot from dataset_plots.py
+    st.subheader("Standardized Feature Analysis")
+    st.write("All features standardized to have mean=0 and std=1 for comparison")
+    
+    try:
+        plotter = StandardizedFeaturePlot(df)
+        standardized_chart = plotter.plot()
+        st.altair_chart(standardized_chart, use_container_width=True)
+    except Exception as e:
+        st.error(f"Error creating standardized feature plot: {str(e)}")
+        st.exception(e)
+    
+    # Feature Analysis - Time series of all features
+    st.subheader("Rescaled Feature Analysis Over Time")
+    st.write("Features rescaled to [0-1] range for comparison")
+    
+    # Check which features are available
+    available_features = []
+    feature_columns = {
+        'disease_cases': 'Disease Cases',
+        'rainfall': 'Rainfall', 
+        'temperature': 'Temperature',
+        'population': 'Population'
+    }
+    
+    for col, label in feature_columns.items():
+        if col in df.columns:
+            available_features.append((col, label))
+    
+    if available_features:
+        # Feature selection with checkboxes
+        st.write("Select features to display:")
+        selected_features = []
+        cols = st.columns(len(available_features))
+        
+        for i, (col, label) in enumerate(available_features):
+            with cols[i]:
+                if st.checkbox(label, value=True, key=f"feature_{col}"):
+                    selected_features.append((col, label))
+        
+        if selected_features:
+            # Prepare data for plotting
+            plot_data = df.copy()
+            
+            # Add date column for time series
+            plot_data['date'] = pd.to_datetime(plot_data['time_period'] + '-01')
+            
+            # Rescale selected features to [0, 1] range
+            scaler = MinMaxScaler()
+            rescaled_data = []
+            
+            for location in plot_data['location'].unique():
+                location_data = plot_data[plot_data['location'] == location].copy()
+                location_data = location_data.sort_values('date')
+                
+                # Get feature data
+                feature_matrix = location_data[[col for col, _ in selected_features]].values
+                
+                # Only rescale if we have valid data
+                if not np.isnan(feature_matrix).all():
+                    # Handle NaN values by using nanmin/nanmax for scaling
+                    valid_data = feature_matrix[~np.isnan(feature_matrix).any(axis=1)]
+                    if len(valid_data) > 0:
+                        scaler.fit(valid_data)
+                        # Apply scaling, preserving NaN values
+                        for i in range(len(feature_matrix)):
+                            if not np.isnan(feature_matrix[i]).any():
+                                continue
+                                feature_matrix[i] = scaler.transform([feature_matrix[i]])[0]
+                
+                # Create long format data
+                for i, (col, label) in enumerate(selected_features):
+                    for idx, (_, row) in enumerate(location_data.iterrows()):
+                        rescaled_data.append({
+                            'location': location,
+                            'date': row['date'],
+                            'time_period': row['time_period'],
+                            'feature': label,
+                            'value': feature_matrix[idx, i] if idx < len(feature_matrix) else np.nan,
+                            'original_value': row[col]
+                        })
+            
+            plot_df = pd.DataFrame(rescaled_data)
+            plot_df = plot_df.dropna(subset=['value'])
+            
+            if not plot_df.empty:
+                # Create time series plot faceted by location
+                time_series_chart = alt.Chart(plot_df).mark_line(
+                    point=True, strokeWidth=2
+                ).encode(
+                    x=alt.X('date:T', title='Date'),
+                    y=alt.Y('value:Q', title='Rescaled Value (0-1)', scale=alt.Scale(domain=[0, 1])),
+                    color=alt.Color('feature:N', legend=alt.Legend(title="Feature")),
+                    tooltip=['location:N', 'date:T', 'feature:N', 'value:Q', 'original_value:Q']
+                ).properties(
+                    width=400,
+                    height=200
+                ).facet(
+                    column=alt.Column('location:N', title='Location'),
+                    columns=2
+                ).resolve_scale(
+                    x='shared'
+                )
+                
+                st.altair_chart(time_series_chart, use_container_width=True)
+                
+                st.info("All features are rescaled to [0-1] range for comparison. Hover over points to see original values.")
+            else:
+                st.warning("No valid data to display for selected features.")
+        else:
+            st.warning("Please select at least one feature to display.")
+    else:
+        st.warning("No recognizable feature columns found in the data.")
     
     # Prepare the DataFrame with additional columns
     df = df.copy()
-    df['log1p'] = np.log1p(df['disease_cases'])
+    df['log1p'] = np.log1p(df['disease_cases']/df['population'])
     df['month'] = df['time_period'].apply(lambda x: int(x.split('-')[1])-1)
     df['year'] = df['time_period'].apply(lambda x: int(x.split('-')[0]))
     
