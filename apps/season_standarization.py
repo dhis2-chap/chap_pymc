@@ -63,8 +63,52 @@ def analyze_data(df: pd.DataFrame):
     
     try:
         plotter = StandardizedFeaturePlot(df)
-        standardized_chart = plotter.plot()
-        st.altair_chart(standardized_chart, use_container_width=True)
+        full_data = plotter.data()
+        
+        if not full_data.empty:
+            # Get available features for selection
+            available_std_features = full_data['feature'].unique()
+            
+            st.write("Select features to display:")
+            selected_std_features = []
+            
+            # Create checkboxes for feature selection
+            std_cols = st.columns(min(4, len(available_std_features)))  # Max 4 columns
+            for i, feature in enumerate(available_std_features):
+                with std_cols[i % len(std_cols)]:
+                    if st.checkbox(feature.replace('_', ' ').title(), value=True, key=f"std_feature_{feature}"):
+                        selected_std_features.append(feature)
+            
+            if selected_std_features:
+                # Filter data to only include selected features
+                filtered_data = full_data[full_data['feature'].isin(selected_std_features)]
+                
+                # Convert time_period to proper datetime format
+                filtered_data['date'] = pd.to_datetime(filtered_data['time_period'] + '-01')
+                
+                # Create the chart with filtered data
+                standardized_chart = alt.Chart(filtered_data).add_params(
+                    alt.selection_interval(bind='scales', encodings=['x'])
+                ).mark_line(
+                    point=False, strokeWidth=2
+                ).encode(
+                    x=alt.X('date:T', title='Date'),
+                    y=alt.Y('value:Q', title='Standardized Value'),
+                    color=alt.Color('feature:N', legend=alt.Legend(title="Feature")),
+                    tooltip=['date:T', 'feature:N', 'value:Q', 'location:N']
+                ).facet(
+                    facet=alt.Facet('location:N', title='Location'),
+                    columns=3
+                ).resolve_scale(
+                    y='shared'
+                )
+                
+                st.altair_chart(standardized_chart, use_container_width=True)
+            else:
+                st.warning("Please select at least one feature to display.")
+        else:
+            st.warning("No standardized feature data available.")
+            
     except Exception as e:
         st.error(f"Error creating standardized feature plot: {str(e)}")
         st.exception(e)

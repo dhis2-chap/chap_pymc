@@ -22,7 +22,15 @@ class DatasetPlot(ABC):
         ...
 
 class StandardizedFeaturePlot(DatasetPlot):
-
+    '''
+    This plot shows standardized(zero mean, unit variance) features over time for different locations.
+    It includes a log1p transformation of the disease incidence rate (disease_cases/population)
+    This shows how different features correlate over time and location.
+    '''
+    
+    def __init__(self, df: pd.DataFrame, selected_features=None):
+        super().__init__(df)
+        self.selected_features = selected_features
     def _standardize(self, col: np.array) -> np.array:
         # Handle NaN values properly
         mean_val = np.nanmean(col)
@@ -66,21 +74,57 @@ class StandardizedFeaturePlot(DatasetPlot):
 
     def plot(self) -> FacetChart:
         data = self.data()
+        
+        # Filter data based on selected features if specified
+        if self.selected_features is not None:
+            data = data[data['feature'].isin(self.selected_features)]
+        
         # Convert time_period to proper datetime format
         data['date'] = pd.to_datetime(data['time_period'] + '-01')
-        
-        return alt.Chart(data).mark_line(
-            point=True, strokeWidth=2
+
+
+        checkbox_selection = alt.selection_point(
+            fields=['feature'],
+            toggle='true'
+        )
+
+        # Create legend that acts as checkboxes
+        legend_chart = alt.Chart(data).mark_circle(size=100).add_params(
+            checkbox_selection
+        ).encode(
+            y=alt.Y('feature:N', axis=alt.Axis(orient='right', title='Select Features')),
+            color=alt.condition(
+                checkbox_selection,
+                alt.Color('feature:N', legend=None),
+                alt.value('lightgray')
+            ),
+            tooltip=['feature:N']
+        ).properties(
+            width=100,
+            title="Click to select/deselect"
+        )
+
+        # Main chart with filtering
+        main_chart = alt.Chart(data).add_params(
+            alt.selection_interval(bind='scales', encodings=['x'])
+        ).mark_line(
+            point=False, strokeWidth=2
         ).encode(
             x=alt.X('date:T', title='Date'),
             y=alt.Y('value:Q', title='Standardized Value'),
             color=alt.Color('feature:N', legend=alt.Legend(title="Feature")),
+            opacity=alt.condition(checkbox_selection, alt.value(1.0), alt.value(0.1)),
             tooltip=['date:T', 'feature:N', 'value:Q', 'location:N']
         ).facet(
-            column=alt.Column('location:N', title='Location'),
-            columns=2
+            facet=alt.Facet('location:N', title='Location'),
+            columns=3
         ).resolve_scale(
-            y='independent'
+            y='shared'
+        )
+        return alt.hconcat(legend_chart, main_chart).resolve_legend(
+            color="independent"
+        ).properties(
+            title="Multiple Feature Selection (Click legend items to toggle)"
         )
 
 
