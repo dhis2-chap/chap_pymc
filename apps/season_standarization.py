@@ -229,154 +229,148 @@ def analyze_data(df: pd.DataFrame):
     )
     
     st.altair_chart(std_chart, use_container_width=True)
-
-    for location_idx, location in enumerate(locations):
-        st.subheader(f"Location: {location}")
-        
+    
+    # Extract parameters for each location and year
+    st.subheader("Parameter Analysis by Location and Year")
+    
+    # Create parameters DataFrame
+    params_list = []
+    
+    for location in df['location'].unique():
         location_data = df[df['location'] == location].copy()
         
-        # Create charts using the DataFrame structure
-        col1, col2 = st.columns(2)
+        for season_idx in location_data['season_idx'].unique():
+            year_data = location_data[location_data['season_idx'] == season_idx].copy()
+            
+            if len(year_data) > 0:
+                # Location parameter: mean of log1p for this location-year
+                location_param = year_data['season_mean'].iloc[0] if not year_data['season_mean'].isna().all() else np.nan
+                
+                # Scale parameter: season_std for this location-year  
+                scale_param = year_data['season_std'].iloc[0] if not year_data['season_std'].isna().all() else np.nan
+                
+                # Trend parameter: slope from linear regression (extract from linear_trend)
+                if not year_data['linear_trend'].isna().all():
+                    # Calculate slope from linear trend values
+                    seasons = year_data['season'].values
+                    trends = year_data['linear_trend'].values
+                    valid_mask = ~np.isnan(trends)
+                    
+                    if valid_mask.sum() > 1:
+                        # Fit to get slope
+                        slope = (trends[valid_mask][-1] - trends[valid_mask][0]) / (seasons[valid_mask][-1] - seasons[valid_mask][0]) if seasons[valid_mask][-1] != seasons[valid_mask][0] else 0
+                        trend_param = slope
+                    else:
+                        trend_param = np.nan
+                else:
+                    trend_param = np.nan
+                
+                params_list.append({
+                    'location': location,
+                    'season_idx': season_idx,
+                    'location_param': location_param,
+                    'scale_param': scale_param, 
+                    'trend_param': trend_param
+                })
+    
+    params_df = pd.DataFrame(params_list)
+    
+    # Remove rows with any NaN parameters and add log(scale)
+    params_df_clean = params_df.dropna()
+    
+    # Add log(scale) parameter, handling zero/negative values
+    params_df_clean['log_scale_param'] = np.log(params_df_clean['scale_param'].clip(lower=1e-10))
+    
+    st.write(f"Parameters extracted for {len(params_df_clean)} location-year combinations")
+    st.dataframe(params_df_clean.head())
+    
+    # Create scatter plots for each parameter combination
+    if len(params_df_clean) > 0:
+        # First show histograms of each parameter
+        st.subheader("Parameter Distributions")
         
-        with col1:
-            # Normalized data chart
-            norm_chart = alt.Chart(location_data).mark_line(
-                point=True, opacity=0.7
+        # Define parameters to plot
+        histogram_params = [
+            ('location_param', 'Location Parameter'),
+            ('log_scale_param', 'Log(Scale) Parameter'),
+            ('trend_param', 'Trend Parameter')
+        ]
+        
+        # Create histograms in columns
+        hist_cols = st.columns(len(histogram_params))
+        
+        for i, (param, title) in enumerate(histogram_params):
+            with hist_cols[i]:
+                hist_chart = alt.Chart(params_df_clean).mark_bar(
+                    opacity=0.7,
+                    color='steelblue'
+                ).encode(
+                    x=alt.X(f'{param}:Q', bin=alt.Bin(maxbins=20), title=title),
+                    y=alt.Y('count():Q', title='Count'),
+                    tooltip=['count():Q']
+                ).properties(
+                    title=f'{title} Distribution',
+                    width=250,
+                    height=200
+                )
+                
+                st.altair_chart(hist_chart, use_container_width=True)
+        
+        st.subheader("2D Parameter Scatter Plots")
+        
+        # Define parameter combinations using log(scale)
+        param_combinations = [
+            ('location_param', 'log_scale_param', 'Location vs Log(Scale)'),
+            ('location_param', 'trend_param', 'Location vs Trend'),
+            ('log_scale_param', 'trend_param', 'Log(Scale) vs Trend')
+        ]
+        
+        # Create scatter plots with faceting by location
+        for i, (x_param, y_param, title) in enumerate(param_combinations):
+            scatter_chart = alt.Chart(params_df_clean).mark_circle(
+                size=100, opacity=0.7, color='steelblue'
             ).encode(
-                x=alt.X('season:O', title='Season (Month from Minimum)', scale=alt.Scale(domain=list(range(12)))),
-                y=alt.Y('log1p_normalized:Q', title='Normalized Disease Cases'),
-                color=alt.Color('season_idx:N', legend=alt.Legend(title="Season Year")),
-                tooltip=['season:O', 'log1p_normalized:Q', 'season_idx:N', 'time_period:N']
+                x=alt.X(f'{x_param}:Q', title=x_param.replace('_param', '').replace('log_scale', 'Log(Scale)').title()),
+                y=alt.Y(f'{y_param}:Q', title=y_param.replace('_param', '').replace('log_scale', 'Log(Scale)').title()),
+                tooltip=['location:N', 'season_idx:N', f'{x_param}:Q', f'{y_param}:Q']
             ).properties(
-                title=f'{location} - Normalized Data',
-                width=400,
-                height=300
+                title=title,
+                width=200,
+                height=150
+            ).facet(
+                column=alt.Column('location:N', title='Location'),
+                columns=3  # Adjust number of columns as needed
+            ).resolve_scale(
+                x='independent',
+                y='independent'
             )
             
-            st.altair_chart(norm_chart, use_container_width=True)
+            st.altair_chart(scatter_chart, use_container_width=True)
         
-        with col2:
-            # Fully normalized data chart
-            full_norm_chart = alt.Chart(location_data).mark_line(
-                opacity=0.7
-            ).encode(
-                x=alt.X('season:O', title='Season (Month from Minimum)', scale=alt.Scale(domain=list(range(12)))),
-                y=alt.Y('fully_normalized:Q', title='Fully Normalized Cases'),
-                color=alt.Color('season_idx:N', legend=alt.Legend(title="Season Year")),
-                tooltip=['season:O', 'fully_normalized:Q', 'season_idx:N', 'time_period:N']
-            ).properties(
-                title=f'{location} - Fully Normalized',
-                width=400,
-                height=300
-            )
-            
-            st.altair_chart(full_norm_chart, use_container_width=True)
+        # Create a combined visualization showing all three dimensions
+        st.subheader("3D Parameter Space (Location-Log(Scale)-Trend)")
         
-        # Seasonal pattern with confidence bands
-        pattern_stats = location_data.groupby('season').agg({
-            'pattern_mean': 'first',
-            'pattern_std': 'first'
-        }).reset_index()
-        
-        # Create confidence band data
-        pattern_stats['upper'] = pattern_stats['pattern_mean'] + pattern_stats['pattern_std']
-        pattern_stats['lower'] = pattern_stats['pattern_mean'] - pattern_stats['pattern_std']
-        
-        # Confidence band
-        band = alt.Chart(pattern_stats).mark_area(
-            opacity=0.3,
-            color='lightblue'
+        # Use a more complex scatter plot with size encoding for the third dimension, faceted by location
+        combined_chart = alt.Chart(params_df_clean).mark_circle(
+            opacity=0.7, color='darkblue'
         ).encode(
-            x=alt.X('season:O', title='Season (Month from Minimum)'),
-            y=alt.Y('lower:Q', title='Pattern Value'),
-            y2=alt.Y2('upper:Q')
-        )
-        
-        # Mean line
-        mean_line = alt.Chart(pattern_stats).mark_line(
-            color='black', 
-            strokeWidth=3
-        ).encode(
-            x=alt.X('season:O'),
-            y=alt.Y('pattern_mean:Q'),
-            tooltip=['season:O', 'pattern_mean:Q', 'pattern_std:Q']
-        )
-        
-        # Upper and lower bounds
-        upper_line = alt.Chart(pattern_stats).mark_line(
-            strokeDash=[5, 5],
-            color='gray',
-            opacity=0.7
-        ).encode(
-            x=alt.X('season:O'),
-            y=alt.Y('upper:Q')
-        )
-        
-        lower_line = alt.Chart(pattern_stats).mark_line(
-            strokeDash=[5, 5],
-            color='gray',
-            opacity=0.7
-        ).encode(
-            x=alt.X('season:O'),
-            y=alt.Y('lower:Q')
-        )
-        
-        seasonal_chart = (band + mean_line + upper_line + lower_line).properties(
-            title=f'{location} - Seasonal Pattern (Mean ± Std)',
-            width=600,
-            height=350
-        )
-        
-        st.altair_chart(seasonal_chart, use_container_width=True)
-        
-        if location_idx >= 4:  # Limit to first 5 locations for performance
-            remaining = len(locations) - location_idx - 1
-            if remaining > 0:
-                st.info(f"Showing first 5 locations. {remaining} more locations available.")
-            break
-    
-    # Create summary comparison charts
-    st.subheader("Summary Statistics")
-    
-    # Get pattern statistics for all locations
-    pattern_summary = df.groupby(['location', 'season']).agg({
-        'pattern_mean': 'first',
-        'pattern_std': 'first'
-    }).reset_index()
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        means_chart = alt.Chart(pattern_summary).mark_line(
-            opacity=0.8, strokeWidth=2
-        ).encode(
-            x=alt.X('season:O', title='Season (Month from Minimum)', scale=alt.Scale(domain=list(range(12)))),
-            y=alt.Y('pattern_mean:Q', title='Mean Normalized Cases'),
-            color=alt.Color('location:N', legend=alt.Legend(title="Location")),
-            tooltip=['season:O', 'pattern_mean:Q', 'location:N']
+            x=alt.X('location_param:Q', title='Location Parameter'),
+            y=alt.Y('log_scale_param:Q', title='Log(Scale) Parameter'),
+            size=alt.Size('trend_param:Q', title='Trend Parameter', scale=alt.Scale(range=[50, 400])),
+            tooltip=['location:N', 'season_idx:N', 'location_param:Q', 'log_scale_param:Q', 'trend_param:Q']
         ).properties(
-            title='Seasonal Means by Location',
-            width=400,
-            height=350
+            title='Combined Parameter Space (Size = Trend Parameter)',
+            width=250,
+            height=200
+        ).facet(
+            column=alt.Column('location:N', title='Location'),
+            columns=3
+        ).resolve_scale(
+            x='independent',
+            y='independent'
         )
         
-        st.altair_chart(means_chart, use_container_width=True)
-    
-    with col2:
-        stds_chart = alt.Chart(pattern_summary).mark_line(
-            opacity=0.8, strokeWidth=2
-        ).encode(
-            x=alt.X('season:O', title='Season (Month from Minimum)', scale=alt.Scale(domain=list(range(12)))),
-            y=alt.Y('pattern_std:Q', title='Std Dev Normalized Cases'),
-            color=alt.Color('location:N', legend=alt.Legend(title="Location")),
-            tooltip=['season:O', 'pattern_std:Q', 'location:N']
-        ).properties(
-            title='Seasonal Standard Deviations by Location',
-            width=400,
-            height=350
-        )
-        
-        st.altair_chart(stds_chart, use_container_width=True)
+        st.altair_chart(combined_chart, use_container_width=True)
     
     st.success("Analysis complete!")
 
