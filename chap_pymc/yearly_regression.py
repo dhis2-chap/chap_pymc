@@ -10,8 +10,8 @@ from .season_plot import SeasonCorrelationPlot
 
 def create_data_arrays(seasonal_data: pd.DataFrame, horizon=3):
     # Remove any rows with missing values
-    clean_data = seasonal_data.dropna(subset=['season_max', 'mean_temperature'])
-
+    outcome = 'std'
+    clean_data = seasonal_data.dropna(subset=[f'season_{outcome}', 'mean_temperature'])
     # Extract predictor and response variables
     X = []
     y = []
@@ -29,7 +29,7 @@ def create_data_arrays(seasonal_data: pd.DataFrame, horizon=3):
             a = np.zeros(n_seasons)
             a[seasonal_month] = mean_temp
             X.append(a)
-            y.append(data['season_max'].values[0])
+            y.append(data[f'season_{outcome}'].values[0])
             location_idx.append(i)
     X = np.array(X)
     X = (X - X.mean())/X.std()  # Centering the predictor
@@ -53,20 +53,12 @@ def basic_season_regression(df: pd.DataFrame, test_size=0.2, random_state=42):
     )
     do_location_beta = False
     with (pm.Model() as model):
-        # Priors
-        start_period = 12
+        start_period = 6
         alpha = pm.Normal('intercept', mu=0, sigma=10, shape=n_locations)
         beta = pm.Normal('slope', mu=0, sigma=10, shape=(start_period,1))
         sigma = pm.HalfNormal('sigma', sigma=1)
-        if do_location_beta:
-            location_betas = pm.Normal('location_slope', mu=0, sigma=1, shape=n_locations)
-            all_loc_betas = location_betas[loc_idx_train, np.newaxis]
-            loc_offset = (all_loc_betas * X_train[..., :start_period]).sum(axis=1)
-        else:
-            loc_offset = 0
-
         # Expected value for training data
-        mu_train = pm.Deterministic('mu_train', alpha[loc_idx_train] + (X_train[..., :start_period] @ beta[:start_period]).squeeze()+loc_offset)
+        mu_train = pm.Deterministic('mu_train', alpha[loc_idx_train] + (X_train[..., :start_period] @ beta[:start_period]).squeeze())
         # Likelihood
         pm.Normal(f'y_obs[{start_period}]', mu=mu_train, sigma=sigma, observed=y_train)
 
