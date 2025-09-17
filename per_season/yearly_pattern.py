@@ -1,5 +1,4 @@
 from pathlib import Path
-
 import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
@@ -26,8 +25,7 @@ def create_data_arrays(df: pd.DataFrame, horizon=3):
     all_stds = []
     full_year_data = []
     for location, group in df.groupby('location'):
-
-        group = group.interpolate()
+        group['log1p'] = group['log1p'].interpolate()
         cutoff_month_index = np.flatnonzero(df['month'] == min_month)[0]
         extra_offset = (len(group)-cutoff_month_index+horizon)%12
         ds = group['log1p'].values
@@ -45,7 +43,9 @@ def create_data_arrays(df: pd.DataFrame, horizon=3):
             year_data_per_loc.append(year_data)
             normalized = (year_data - year_data[:12].mean()) / max(year_data[:12].std(), 0.001)
             normies.append(normalized)
-            plt.plot(normalized)
+            plt.plot(normalized, 'o')
+        plt.title(str(location)+'norm')
+        plt.show()
         year_data_per_loc = np.array(year_data_per_loc)
         full_year_data.append(year_data_per_loc)
         normies = np.array(normies)
@@ -55,6 +55,13 @@ def create_data_arrays(df: pd.DataFrame, horizon=3):
         assert not np.isnan(stds).any(), (normies, stds)
         all_means.append(means)
         all_stds.append(stds)
+        fully_norm = (normies-means)/stds
+        #mark os
+        plt.plot(fully_norm)
+
+        plt.show()
+        #plt.plot(stds)
+        #plt.show()
         h = means + stds
         l = means - stds
         # plt.plot(h, c='k', ls='--')
@@ -62,10 +69,65 @@ def create_data_arrays(df: pd.DataFrame, horizon=3):
         # plt.plot(l, c='k', ls='--')
 
         # group = group.reset_index().iloc[:12]
-        # plt.plot( group['disease_cases'])
+        #plt.plot( group['disease_cases'])
         plt.title(location)
         #plt.show()
     return np.array(all_means), np.array(all_stds), np.array(full_year_data),missing+3
+
+def chatgpted_model(full_year_data, missing:int=3):
+    L, Y, M = full_year_data.shape
+    seen_months = M - missing
+
+
+
+def make_full_model(full_year_data: 'loc, year, month', missing: int=3):
+    L, Y, M = full_year_data.shape
+    seen_months = M - missing
+    with pm.Model() as model:
+        a = pm.Normal('a', mu=0, sigma=10, shape=(L, Y, 1))
+        b = pm.Normal('b', mu=0, sigma=10, shape=(L, Y, 1))
+        c = pm.Normal('c', mu=0, sigma=10, shape=(L, Y, 1))
+        t = np.arange(0, M).reshape(1, 1, M)
+        #eta = pm.Deterministic('eta', a*t**2+b*t+c)
+        all_mu = pm.Deterministic('all_mu', a*t**2+b*t+c)
+        if False:
+            yearly_offsets = pm.Normal('yearly_offsets', mu=0, sigma=2, shape=(L, Y, 1))
+            yearly_scales = pm.HalfNormal('yearly_scales', sigma=2,
+                                    shape=(L, Y, 1))
+            monthly_shape_raw = pm.Normal('monthly_shape_raw',
+                                      mu=0, sigma=2, shape=(L, 1, M))
+
+            monthly_shape = pm.Deterministic('monthly_shape', monthly_shape_raw-monthly_shape_raw.mean(axis=-1, keepdims=True))
+
+        # means are a combination of withinyear monthly shape and offset and scale per year
+        # all_mu = pm.Deterministic('all_mu',
+        #                           monthly_shape * yearly_scales + yearly_offsets)
+
+        if False:
+            location_sigma = pm.HalfNormal('location_sigma', sigma=2,shape=(L, 1, 1))
+            month_sigma = pm.HalfNormal('month_sigma', sigma=2,shape=(1, 1, M))
+            base_sigma = pm.Deterministic('base_sigma', np.sqrt(location_sigma**2 + month_sigma**2))
+        # base_sigma = pm.HalfNormal('base_sigma', sigma=10, shape=(L, 1, M))
+        base_sigma = np.full((L, 1, M), 1)
+        pm.Normal('seen_years',
+                  mu=all_mu[:, :-1, :],
+                  sigma=base_sigma,
+                  observed=full_year_data[:, :-1, :])
+        pm.Normal('seen_same_year',
+                  mu=all_mu[:, -1:, :seen_months],
+                  sigma=base_sigma[..., :seen_months],
+                  observed=full_year_data[:, -1:, :seen_months])
+        pm.Normal('pred_mean',
+                  mu=all_mu[:, -1:, seen_months:],
+                  sigma=base_sigma[..., seen_months:])
+
+
+        idata = pm.sample(
+            draws=500,
+            chains=4,
+            tune=500,
+            progressbar=True)
+    return idata
 
 
 def make_model(all_means: 'L, M', all_stds, full_year_data: 'loc, year, month', missing:int=0):
@@ -80,11 +142,12 @@ def make_model(all_means: 'L, M', all_stds, full_year_data: 'loc, year, month', 
         mu = pm.Normal('mu', 0.0, 10.)
         yearly_mean = pm.Normal('yearly_mean', mu=mu,sigma=10, shape=(L, Y,1))
         yearly_std = pm.HalfNormal('yearly_std', sigma=sigma, shape=(L, Y, 1))
+
         normalized = pm.Normal('normalized', mu=all_means, sigma=all_stds)
         pred_means = pm.Deterministic('pred_mean', normalized * yearly_std+yearly_mean)
 
         pm.Normal('train_obs', mu=pred_means[:, :-1, :], sigma=0.1, observed=train_data)
-        seen_months = M-missing
+        seen_months = M - missing
         pm.Normal('test_obs', mu=pred_means[:, -1:, :seen_months], sigma=0.1, observed=test_data[:, :, :seen_months])
         idata = pm.sample(
             draws=500,
@@ -151,7 +214,8 @@ def test_output_predictions(training_df, posterior_samples):
 
 def test_make_data(training_df):
     all_means, all_stds, full_year_data,missing = create_data_arrays(training_df)
-    idata = make_model(all_means, all_stds, full_year_data, missing)
+    # idata = make_model(all_means, all_stds, full_year_data, missing)
+    idata = make_full_model(full_year_data, missing)
     posterior_samples = idata.posterior['pred_mean'].stack(dim={'samples':('draw', 'chain')}).values
     return create_output(training_df, posterior_samples, missing)
 
@@ -174,7 +238,8 @@ def predict(model: str,
 
 def get_predictions(training_df: DataFrame) -> DataFrame:
     all_means, all_stds, full_year_data, missing = create_data_arrays(training_df)
-    idata = make_model(all_means, all_stds, full_year_data,missing=missing)
+    #idata = make_model(all_means, all_stds, full_year_data,missing=missing)
+    idata = make_full_model(full_year_data, missing)
     posterior_samples = idata.posterior['pred_mean'].stack(dim={'samples': ('draw', 'chain')}).values
     predictions = create_output(training_df, posterior_samples,missing=missing)
     return predictions

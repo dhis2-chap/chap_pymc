@@ -70,17 +70,21 @@ class SeasonCorrelationBarPlot(SeasonCorrelationPlot):
         last_months_subset['seasonal_month'] -= 12
         last_months_subset['season_idx'] += 1
         df = pd.concat([df, last_months_subset], ignore_index=True)
+
         # Calculate correlation coefficient between season_mean and mean_temperature for each season_idx and location
         correlations = []
         for (location, seasonal_month), group in df.groupby(['location', 'seasonal_month']):
             for feature_name in self._get_feature_names():
-                corr = group['season_max'].corr(group[feature_name])
-                correlations.append({
-                    'location': location,
-                    'seasonal_month': seasonal_month,
-                    f'correlation': corr,
-                    'feature': feature_name
-                })
+                for outcome in ['max', 'mean', 'std']:
+                    corr = group[f'season_{outcome}'].corr(group[feature_name])
+                    correlations.append({
+                        'location': location,
+                        'seasonal_month': seasonal_month,
+                        f'correlation': corr,
+                        'feature': feature_name,
+                        'outcome': outcome,
+                        'combination': f'{feature_name}_vs_season_{outcome}'
+                    })
 
         return pd.DataFrame(correlations)
 
@@ -95,7 +99,7 @@ class SeasonCorrelationBarPlot(SeasonCorrelationPlot):
             tooltip=['location:N', 'seasonal_month:O', 'correlation:Q']
         ).facet(
             column=alt.Column('location:N', title='Location'),
-            row=alt.Row('feature:N', title='Feature')
+            row = alt.Row('combination:N', title='Feature vs Outcome')
         ).properties(
             title={
                 "text": "Seasonal Correlation Analysis",
