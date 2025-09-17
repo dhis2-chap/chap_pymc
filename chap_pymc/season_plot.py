@@ -66,17 +66,21 @@ class SeasonCorrelationBarPlot(SeasonCorrelationPlot):
 
     def data(self) -> pd.DataFrame:
         df = super().data()
+        last_months_subset = df[df['seasonal_month'] >= 9].copy()
+        last_months_subset['seasonal_month'] -= 12
+        last_months_subset['season_idx'] += 1
+        df = pd.concat([df, last_months_subset], ignore_index=True)
         # Calculate correlation coefficient between season_mean and mean_temperature for each season_idx and location
         correlations = []
         for (location, seasonal_month), group in df.groupby(['location', 'seasonal_month']):
-            if len(group) > 1:  # Need at least 2 points for correlation
-                corr = group['season_max'].corr(group[self.feature_name])
-                if not np.isnan(corr):
-                    correlations.append({
-                        'location': location,
-                        'seasonal_month': seasonal_month,
-                        'correlation': corr
-                    })
+            for feature_name in self._get_feature_names():
+                corr = group['season_max'].corr(group[feature_name])
+                correlations.append({
+                    'location': location,
+                    'seasonal_month': seasonal_month,
+                    f'correlation': corr,
+                    'feature': feature_name
+                })
 
         return pd.DataFrame(correlations)
 
@@ -90,8 +94,8 @@ class SeasonCorrelationBarPlot(SeasonCorrelationPlot):
                           title='Correlation'),
             tooltip=['location:N', 'seasonal_month:O', 'correlation:Q']
         ).facet(
-            facet=alt.Facet('location:N', title='Location'),
-            columns=3
+            column=alt.Column('location:N', title='Location'),
+            row=alt.Row('feature:N', title='Feature')
         ).properties(
             title={
                 "text": "Seasonal Correlation Analysis",
@@ -111,7 +115,9 @@ def test_season_plot(df: pd.DataFrame):
 
     print(data)
     assert 'seasonal_month' in data.columns
-    plot.plot().save('season_plot.html')
+    chart = plot.plot()
+    chart.save('season_plot.html')
+    chart.save('season_plot.png')
 
 def test_season_correlation_plot(df: pd.DataFrame):
     plot = SeasonCorrelationPlot(df)
@@ -119,7 +125,9 @@ def test_season_correlation_plot(df: pd.DataFrame):
     print(data)
     assert 'season_mean' in data.columns
     assert 'season_std' in data.columns
-    plot.plot().save('season_correlation_plot.html')
+    chart = plot.plot()
+    chart.save('season_correlation_plot.html')
+    chart.save('season_correlation_plot.png')
 
 def test_season_correlation_bar_plot(df: pd.DataFrame):
     plot = SeasonCorrelationBarPlot(df)
@@ -127,4 +135,6 @@ def test_season_correlation_bar_plot(df: pd.DataFrame):
     print(data)
     assert 'correlation' in data.columns
     assert 'location' in data.columns
-    plot.plot().save('season_correlation_bar_plot.html')
+    chart = plot.plot()
+    chart.save('season_correlation_bar_plot.html')
+    chart.save('season_correlation_bar_plot.png')

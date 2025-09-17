@@ -26,7 +26,8 @@ class DatasetPlot(ABC):
         df['ideal_temperature'] = temperature_transform(df['mean_temperature'])
         self._df = df
 
-
+    def _get_feature_names(self) -> list:
+        return [name for name in self._get_colnames() if name not in ('log1p', 'log1p', 'population')]
 
     def _get_colnames(self) -> filter:
         colnames = filter(lambda name: name not in ('disease_cases', 'location', 'time_period') and not name.startswith('Unnamed'), self._df.columns)
@@ -165,15 +166,18 @@ def test_standardized_feature_plot(df: pd.DataFrame):
     
     chart = plotter.plot()
     chart.save('standardized_feature_plot.html')
-    print("Chart saved to standardized_feature_plot.html")
+    chart.save('standardized_feature_plot.png')
+    print("Chart saved to standardized_feature_plot.html and standardized_feature_plot.png")
 
 def test_temperature_transform():
     temps = np.arange(35)
     transformed = temperature_transform(temps)
     df = pd.DataFrame({'mean_temperature': temps, 'ideal_temperature': transformed})
-    alt.Chart(df).mark_line().encode(
+    chart = alt.Chart(df).mark_line().encode(
         x='mean_temperature',
         y='ideal_temperature'
     ).properties(
         title='Temperature Transformation'
-    ).save('temperature_transform.html')
+    )
+    chart.save('temperature_transform.html')
+    chart.save('temperature_transform.png')
