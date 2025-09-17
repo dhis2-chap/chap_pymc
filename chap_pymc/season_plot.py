@@ -62,7 +62,7 @@ class SeasonCorrelationPlot(DatasetPlot):
 
 
 class SeasonCorrelationBarPlot(SeasonCorrelationPlot):
-    feature_name = 'ideal_temperature'  # Example feature to correlate with season_mean
+    feature_name = 'mean_temperature'  # Example feature to correlate with season_mean
 
     def data(self) -> pd.DataFrame:
         df = super().data()
@@ -84,7 +84,7 @@ class SeasonCorrelationBarPlot(SeasonCorrelationPlot):
         df = self.data()
         return alt.Chart(df).mark_bar().encode(
             x=alt.X('seasonal_month:O', title='Seasonal Month'),
-            y=alt.Y('correlation:Q', title='Correlation (Season Mean vs Temperature)'),
+            y=alt.Y('correlation:Q', title='Correlation (Season Max vs Temperature)'),
             color=alt.Color('correlation:Q',
                           scale=alt.Scale(scheme='redblue', domain=[-1, 1]),
                           title='Correlation'),
@@ -92,6 +92,11 @@ class SeasonCorrelationBarPlot(SeasonCorrelationPlot):
         ).facet(
             facet=alt.Facet('location:N', title='Location'),
             columns=3
+        ).properties(
+            title={
+                "text": "Seasonal Correlation Analysis",
+                "subtitle": "Correlation between season maximum disease cases and mean temperature by seasonal month and location. Red bars indicate negative correlation, blue bars indicate positive correlation."
+            }
         )
 
 
