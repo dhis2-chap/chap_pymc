@@ -22,7 +22,7 @@ def create_output(training_pdf, posterior_samples, n_samples=100):
     rows = []
 
     #M = posterior_samples.shape[-2]
-    posterior_samples = np.expm1(posterior_samples)
+    # posterior_samples = np.expm1(posterior_samples)
     for l_id, location in enumerate(locations):
         for t_id, time_period in enumerate(new_time_periods):
             samples = posterior_samples[l_id, t_id, -n_samples:]
@@ -174,6 +174,94 @@ class SeasonalRegression:
 
         plt.close()
 
+    def plot_prediction(self, idata, training_data, output_file=None):
+        """Plot median transformed_samples vs actual observed y, faceted by year (rows) and location (columns)."""
+
+        # Prepare the training data
+        training_data_copy = training_data.copy()
+        training_data_copy['y'] = np.log1p(training_data_copy['disease_cases']).interpolate()
+        seasonal_data = SeasonalTransform(training_data_copy)
+        y_observed = seasonal_data['y'][:, 2:]  # Match the slicing in predict method
+
+        # Get the transformed samples from posterior
+        transformed_samples = idata.posterior['transformed_samples']  # (chain, draw, locations, years, months)
+
+        # Calculate median across chains and draws
+        median_predictions = transformed_samples.median(dim=['chain', 'draw']).values  # (locations, years, months)
+
+        L, Y, M = y_observed.shape
+        locations = training_data['location'].unique()
+
+        # Create time indices for plotting
+        # Get the starting year from the seasonal transform
+        first_year = training_data['time_period'].apply(lambda x: int(x.split('-')[0])).min()
+        years = list(range(first_year + 2, first_year + 2 + Y))  # +2 because we slice [:, 2:]
+        months = list(range(1, M + 1))
+
+        # Set up the plot - rows for years, columns for locations
+        n_locs = len(locations)
+        n_years = len(years)
+
+        fig, axes = plt.subplots(n_years, n_locs, figsize=(4 * n_locs, 3 * n_years))
+
+        # Handle different subplot configurations
+        if n_years == 1 and n_locs == 1:
+            axes = [[axes]]
+        elif n_years == 1:
+            axes = [axes]
+        elif n_locs == 1:
+            axes = [[ax] for ax in axes]
+
+        month_labels = [f'M{m}' for m in months]
+        x_vals = np.arange(len(month_labels))
+
+        for year_idx, year in enumerate(years):
+            for loc_idx, location in enumerate(locations):
+                ax = axes[year_idx][loc_idx]
+
+                # Get observed and predicted values for this year-location combination
+                y_obs = y_observed[loc_idx, year_idx, :]
+                y_pred = median_predictions[loc_idx, year_idx, :]
+
+                # Plot observed vs predicted (only two lines per subplot)
+                ax.plot(x_vals, y_obs, 'o-', color='blue', alpha=0.8, linewidth=2,
+                       markersize=6, label='Observed')
+                ax.plot(x_vals, y_pred, 's--', color='red', alpha=0.8, linewidth=2,
+                       markersize=6, label='Predicted')
+
+                # Formatting
+                ax.set_title(f'{location} - {year}', fontsize=10, fontweight='bold')
+                ax.grid(True, alpha=0.3)
+
+                # Set month labels
+                ax.set_xticks(x_vals)
+                ax.set_xticklabels(month_labels, rotation=45)
+
+                # Labels only on edge subplots
+                if year_idx == n_years - 1:  # Bottom row
+                    ax.set_xlabel('Month')
+                if loc_idx == 0:  # Left column
+                    ax.set_ylabel('Log(Disease Cases + 1)')
+
+                # Legend only on top-right subplot
+                if year_idx == 0 and loc_idx == n_locs - 1:
+                    ax.legend(fontsize=8)
+
+        # Add overall title
+        fig.suptitle('Model Predictions vs Observed Data by Year and Location',
+                     fontsize=14, fontweight='bold')
+
+        plt.tight_layout()
+        plt.subplots_adjust(top=0.93)  # Make room for suptitle
+
+        if output_file:
+            plt.savefig(output_file, dpi=300, bbox_inches='tight')
+            print(f"Prediction plot saved to: {output_file}")
+        else:
+            plt.show()
+
+        plt.close()
+
 def test_seasonal_regression(df: pd.DataFrame):
     model = SeasonalRegression(mcmc_params=MCMCParams().debug())
     preds = model.predict(df)
@@ -189,7 +277,11 @@ def main(csv_file: str):
     df = pd.read_csv(csv_file)
     model = SeasonalRegression()
     preds, idata = model.predict(df, return_idata=True)
+    # save data from idata
+    idata.to_netcdf('seasonal_regression_trace.nc')
     model.plot_trace(idata, 'seasonal_regression_trace.png')
+
+    model.plot_prediction(idata, df, 'seasonal_regression_predictions.png')
     preds.to_csv('seasonal_regression_output.csv', index=False)
 
 if __name__ == '__main__':
