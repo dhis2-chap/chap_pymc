@@ -41,15 +41,13 @@ class SeasonalRegression:
 
     def predict(self, training_data: pd.DataFrame, return_idata=False):
         training_data['y'] = np.log1p(training_data['disease_cases']).interpolate()
-        seasonal_data = SeasonalTransform(training_data)
+        seasonal_data = SeasonalTransform(training_data, min_prev_months=self._lag, min_post_months=self._prediction_length)
         y = seasonal_data['y']
         y = y[:, 1:]
         X = {feature: seasonal_data[feature] for feature in self.features}
 
         L, Y, M = y.shape  # Locations, Years, Months
         mean_y = np.nanmean(y, axis=-1, keepdims=True) # L, Y, 1
-        # max_y = np.nanmax(y, axis=-1, keepdims=True) # L, Y, 1
-        # std_y = np.nanstd(y, axis=-1, keepdims=True) # L, Y, 1
         base = (y - mean_y) #/ np.maximum(std_y, 0.001)  # L, Y, M
         std_per_mont_per_loc = np.nanstd(base, axis=1, keepdims=True)  # L, 1, M
         seasonal_pattern = np.nanmean(base, axis=1, keepdims=True)
@@ -263,7 +261,7 @@ class SeasonalRegression:
         plt.close()
 
 def test_seasonal_regression(df: pd.DataFrame):
-    model = SeasonalRegression(mcmc_params=MCMCParams().debug())
+    model = SeasonalRegression(mcmc_params=MCMCParams().debug(), lag=7, prediction_length=7)
     preds = model.predict(df)
 
 def test_sample_broadcasting():
@@ -284,8 +282,8 @@ def main(csv_file: str):
     model.plot_prediction(idata, df, 'seasonal_regression_predictions.png')
     preds.to_csv('seasonal_regression_output.csv', index=False)
 
-app = cyclopts.Cyclopts()
-
+app = cyclopts.App()
+#
 @app.command()
 def train(train_data: str, model: str, model_config: str, force=False):
     return
@@ -298,13 +296,12 @@ def predict(model: str,
             model_config: str | None = None):
     training_df = pd.read_csv(historic_data)
     model = SeasonalRegression()
-    preds, idata = model.predict(training_df, return_idata=True)
-
-    predictions = get_predictions(training_df)
+    predictions, idata = model.predict(training_df, return_idata=True)
+    # predictions = get_predictions(training_df)
     predictions.to_csv(out_file, index=False)
 
 
 # saav
 
 if __name__ == '__main__':
-    cyclopts.run(main)
+    app()
