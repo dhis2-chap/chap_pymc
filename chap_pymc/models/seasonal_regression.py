@@ -2,6 +2,7 @@ import cyclopts
 import numpy as np
 import pandas as pd
 import pymc as pm
+import matplotlib.pyplot as plt
 
 from chap_pymc.mcmc_params import MCMCParams
 from chap_pymc.seasonal_transform import SeasonalTransform
@@ -38,55 +39,157 @@ class SeasonalRegression:
         self._lag = lag
         self._mcmc_params = mcmc_params
 
-    def predict(self, training_data: pd.DataFrame) -> pd.DataFrame:
+    def predict(self, training_data: pd.DataFrame, return_idata=False):
         training_data['y'] = np.log1p(training_data['disease_cases']).interpolate()
         seasonal_data = SeasonalTransform(training_data)
         y = seasonal_data['y']
-        y = y[:, 1:]
+        y = y[:, 2:]
         X = {feature: seasonal_data[feature] for feature in self.features}
 
         L, Y, M = y.shape  # Locations, Years, Months
         mean_y = np.nanmean(y, axis=-1, keepdims=True) # L, Y, 1
-        max_y = np.nanmax(y, axis=-1, keepdims=True) # L, Y, 1
-        std_y = np.nanstd(y, axis=-1, keepdims=True) # L, Y, 1
+        # max_y = np.nanmax(y, axis=-1, keepdims=True) # L, Y, 1
+        # std_y = np.nanstd(y, axis=-1, keepdims=True) # L, Y, 1
         base = (y - mean_y) #/ np.maximum(std_y, 0.001)  # L, Y, M
-        sample_std = np.nanstd(base, axis=1, keepdims=True)  # L, 1, M
-        sample_mean = np.nanmean(base, axis=1, keepdims=True)
+        std_per_mont_per_loc = np.nanstd(base, axis=1, keepdims=True)  # L, 1, M
+        seasonal_pattern = np.nanmean(base, axis=1, keepdims=True)
         last_month = seasonal_data.last_seasonal_month
-        temp = X['mean_temperature'][:, 1:, last_month-self._lag+1:last_month+1]
+        temp = X['mean_temperature'][:, 2:, last_month-self._lag+1:last_month+1]
+        temp = (temp - np.nanmean(temp)) / np.nanstd(temp)  # Standardize predictor
         n_outcomes = 1  # mean only
         with pm.Model() as model:
             #Regression
             alpha = pm.Normal('intercept', mu=0, sigma=10, shape=(L, 1, n_outcomes))
             beta = pm.Normal('slope', mu=0, sigma=10, shape=(self._lag, n_outcomes))
+
             sigma = pm.HalfNormal('sigma', sigma=1)
             eta = pm.Deterministic('eta',
                                    alpha + (temp[..., :self._lag] @ beta[:self._lag]))
+
+            # Maybe clearer to just add epsilon noise here
             sampled_eta = pm.Normal('sampled_eta', mu=eta, sigma=sigma, shape=(L, Y, n_outcomes))
             mu = sampled_eta[..., [0]]
-            #std = np.exp(sampled_eta[..., [1]])
 
-            samples = pm.Normal('samples', mu=sample_mean, sigma=sample_std, shape=(L, Y, M))
+            samples = pm.Normal('samples',
+                                mu=seasonal_pattern,
+                                sigma=std_per_mont_per_loc,
+                                shape=(L, Y, M)) # Maybe shape is wrong should be (L, M, Y).reshape(L, Y, M)
+
             transformed_samples = pm.Deterministic('transformed_samples', samples + mu)
             valid_slice = slice(0, -1, 1)
+
             pm.Normal('observed', mu=transformed_samples[:, valid_slice], sigma=0.1, observed=y[:, valid_slice])
-            pm.Normal('y_obs', mu=transformed_samples[:, -1:, :last_month + 1], sigma=0.1, observed=y[:, -1:, :last_month + 1])
+            pm.Normal('y_obs',
+                      mu=transformed_samples[:, -1:, :last_month + 1],
+                      sigma=0.1,
+                      observed=y[:, -1:, :last_month + 1])
+
             idata = pm.sample(**self._mcmc_params.model_dump())
 
         posterior_samples = idata.posterior['transformed_samples'].stack(samples=("chain", "draw")).values[:, -1, last_month+1:last_month+self._prediction_length+1]
         preds = np.expm1(posterior_samples)
-        mask = preds < 0
-        return create_output(training_data, preds)
+        if return_idata:
+            return create_output(training_data, preds), idata
+        else:
+            return create_output(training_data, preds)
+
+    def plot_trace(self, idata, output_file=None):
+        """Plot trace plots for all alpha (intercept) and beta (slope) parameters."""
+
+        # Get parameter data
+        alpha_data = idata.posterior['intercept']  # Shape: (chain, draw, L, 1, n_outcomes)
+        beta_data = idata.posterior['slope']       # Shape: (chain, draw, lag, n_outcomes)
+
+        n_locations = alpha_data.shape[2]
+        n_lags = beta_data.shape[2]
+
+        # Create subplots: one row for each location's alpha, plus one row for all betas
+        fig, axes = plt.subplots(n_locations + n_lags, 2, figsize=(12, 3 * (n_locations + n_lags)))
+
+        # Plot alpha (intercept) traces for each location
+        for loc in range(n_locations):
+            row_idx = loc
+
+            # Extract alpha values for this location
+            alpha_values = alpha_data.values[:, :, loc, 0, 0]  # (chain, draw)
+
+            # Trace plot
+            ax_trace = axes[row_idx, 0]
+            for chain in range(alpha_values.shape[0]):
+                ax_trace.plot(alpha_values[chain, :], alpha=0.8, label=f'Chain {chain+1}')
+            ax_trace.set_title(f'Alpha[{loc}] - Trace Plot')
+            ax_trace.set_xlabel('Draw')
+            ax_trace.set_ylabel('Value')
+            ax_trace.legend()
+            ax_trace.grid(True, alpha=0.3)
+
+            # Posterior distribution
+            ax_posterior = axes[row_idx, 1]
+            alpha_flat = alpha_values.flatten()
+            ax_posterior.hist(alpha_flat, bins=50, density=True, alpha=0.6, edgecolor='black')
+            ax_posterior.axvline(np.mean(alpha_flat), color='red', linestyle='-', label='Mean')
+            ax_posterior.axvline(np.median(alpha_flat), color='black', linestyle='--', label='Median')
+            ax_posterior.set_title(f'Alpha[{loc}] - Posterior Distribution')
+            ax_posterior.set_xlabel('Value')
+            ax_posterior.set_ylabel('Density')
+            ax_posterior.legend()
+            ax_posterior.grid(True, alpha=0.3)
+
+        # Plot beta (slope) traces for each lag
+        for lag in range(n_lags):
+            row_idx = n_locations + lag
+
+            # Extract beta values for this lag
+            beta_values = beta_data.values[:, :, lag, 0]  # (chain, draw)
+
+            # Trace plot
+            ax_trace = axes[row_idx, 0]
+            for chain in range(beta_values.shape[0]):
+                ax_trace.plot(beta_values[chain, :], alpha=0.8, label=f'Chain {chain+1}')
+            ax_trace.set_title(f'Beta[{lag}] - Trace Plot')
+            ax_trace.set_xlabel('Draw')
+            ax_trace.set_ylabel('Value')
+            ax_trace.legend()
+            ax_trace.grid(True, alpha=0.3)
+
+            # Posterior distribution
+            ax_posterior = axes[row_idx, 1]
+            beta_flat = beta_values.flatten()
+            ax_posterior.hist(beta_flat, bins=50, density=True, alpha=0.6, edgecolor='black')
+            ax_posterior.axvline(np.mean(beta_flat), color='red', linestyle='-', label='Mean')
+            ax_posterior.axvline(np.median(beta_flat), color='black', linestyle='--', label='Median')
+            ax_posterior.set_title(f'Beta[{lag}] - Posterior Distribution')
+            ax_posterior.set_xlabel('Value')
+            ax_posterior.set_ylabel('Density')
+            ax_posterior.legend()
+            ax_posterior.grid(True, alpha=0.3)
+
+        plt.tight_layout()
+
+        if output_file:
+            plt.savefig(output_file, dpi=300, bbox_inches='tight')
+            print(f"Trace plots saved to: {output_file}")
+        else:
+            plt.show()
+
+        plt.close()
 
 def test_seasonal_regression(df: pd.DataFrame):
     model = SeasonalRegression(mcmc_params=MCMCParams().debug())
     preds = model.predict(df)
-    assert preds.shape == (7, 3, 20), preds
+
+def test_sample_broadcasting():
+    means = np.arange(6).reshape((2, 1, 3))
+    print(means)
+    samples = pm.draw(pm.Normal.dist(mu=means, sigma=0.1, shape=(2, 4, 3)))
+    print(samples)
+    assert False
 
 def main(csv_file: str):
     df = pd.read_csv(csv_file)
     model = SeasonalRegression()
-    preds = model.predict(df)
+    preds, idata = model.predict(df, return_idata=True)
+    model.plot_trace(idata, 'seasonal_regression_trace.png')
     preds.to_csv('seasonal_regression_output.csv', index=False)
 
 if __name__ == '__main__':
