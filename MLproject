@@ -69,13 +69,13 @@ user_options:
 
 entry_points:
   train:
-    command: python chap_pymc/models/seasonal_regression.py train {train_data} {model} {model_config}
+    command: python main.py train {train_data} {model} {model_config}
     parameters:
       train_data: str
       model: str
       model_config: str
   predict:
-    command: python chap_pymc/models/seasonal_regression.py predict {model} {historic_data} {future_data} {out_file}
+    command: python main.py predict {model} {historic_data} {future_data} {out_file}
       {model_config}
     parameters:
       model: str
