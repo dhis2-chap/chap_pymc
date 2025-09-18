@@ -43,7 +43,7 @@ class SeasonalRegression:
         training_data['y'] = np.log1p(training_data['disease_cases']).interpolate()
         seasonal_data = SeasonalTransform(training_data)
         y = seasonal_data['y']
-        y = y[:, 2:]
+        y = y[:, 1:]
         X = {feature: seasonal_data[feature] for feature in self.features}
 
         L, Y, M = y.shape  # Locations, Years, Months
@@ -54,7 +54,7 @@ class SeasonalRegression:
         std_per_mont_per_loc = np.nanstd(base, axis=1, keepdims=True)  # L, 1, M
         seasonal_pattern = np.nanmean(base, axis=1, keepdims=True)
         last_month = seasonal_data.last_seasonal_month
-        temp = X['mean_temperature'][:, 2:, last_month-self._lag+1:last_month+1]
+        temp = X['mean_temperature'][:, 1:, last_month-self._lag+1:last_month+1]
         temp = (temp - np.nanmean(temp)) / np.nanstd(temp)  # Standardize predictor
         n_outcomes = 1  # mean only
         with pm.Model() as model:
@@ -283,6 +283,28 @@ def main(csv_file: str):
 
     model.plot_prediction(idata, df, 'seasonal_regression_predictions.png')
     preds.to_csv('seasonal_regression_output.csv', index=False)
+
+app = cyclopts.Cyclopts()
+
+@app.command()
+def train(train_data: str, model: str, model_config: str, force=False):
+    return
+
+@app.command()
+def predict(model: str,
+            historic_data: str,
+            future_data: str,
+            out_file: str,
+            model_config: str | None = None):
+    training_df = pd.read_csv(historic_data)
+    model = SeasonalRegression()
+    preds, idata = model.predict(training_df, return_idata=True)
+
+    predictions = get_predictions(training_df)
+    predictions.to_csv(out_file, index=False)
+
+
+# saav
 
 if __name__ == '__main__':
     cyclopts.run(main)
