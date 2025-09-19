@@ -1,4 +1,4 @@
-name: torch-deep
+name: hmc_model
 
 meta_data:
   author: Knut Rand
