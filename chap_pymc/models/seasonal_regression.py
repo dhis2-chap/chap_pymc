@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 import pymc as pm
 import matplotlib.pyplot as plt
+import altair as alt
 
 from chap_pymc.mcmc_params import MCMCParams
 from chap_pymc.seasonal_transform import SeasonalTransform
@@ -73,9 +74,11 @@ class SeasonalRegression:
             sigma = pm.HalfNormal('sigma', sigma=5)
             eta = pm.Deterministic('eta',
                                    alpha + (temp[..., :self._lag] @ beta[:self._lag]))
-
+            scale = pm.HalfNormal('scale', sigma=5, shape=(L, Y, 1))
             # Maybe clearer to just add epsilon noise here
             sampled_eta = pm.Normal('sampled_eta', mu=eta, sigma=sigma, shape=(L, Y, n_outcomes))
+
+
             mu = sampled_eta[..., [0]]
 
             samples = pm.Normal('samples',
@@ -83,7 +86,7 @@ class SeasonalRegression:
                                 sigma=std_per_mont_per_loc,
                                 shape=(L, Y, M)) # Maybe shape is wrong should be (L, M, Y).reshape(L, Y, M)
 
-            transformed_samples = pm.Deterministic('transformed_samples', samples + mu)
+            transformed_samples = pm.Deterministic('transformed_samples', samples*scale + mu)
             valid_slice = slice(0, -1, 1)
 
             pm.Normal('observed', mu=transformed_samples[:, valid_slice], sigma=0.1, observed=y[:, valid_slice])
@@ -110,58 +113,90 @@ class SeasonalRegression:
         median_dict = {name: idata.posterior[name].median(dim=['chain', 'draw']).values for name in param_names}
 
         L, Y, M = training_data.y.shape  # Locations, Years, Months
+        last_year_idx = Y - 1
 
-        # Create one subplot per location
-        fig, axes = plt.subplots(1, L, figsize=(6*L, 6))
-        if L == 1:
-            axes = [axes]
-
-        # Use months 1-12 as x-axis (seasonal_month)
-        seasonal_months = np.arange(1, M + 1)
+        # Create data in long format for Altair
+        data = []
 
         for loc in range(L):
-            ax = axes[loc]
+            location_name = f'Location {loc}'
 
-            # Get data for the last year (Y-1)
-            last_year_idx = Y - 1
+            # Get median values for this location and last year
+            eta_val = median_dict['eta'][loc, last_year_idx, 0]
+            sampled_eta_val = median_dict['sampled_eta'][loc, last_year_idx, 0]
+            epsilon = sampled_eta_val - eta_val
 
-            # Extract median values for this location and last year
-            eta_vals = median_dict['eta'][loc, last_year_idx, 0]  # eta is (L, Y, 1)
-            sampled_eta_vals = median_dict['sampled_eta'][loc, last_year_idx, 0]  # sampled_eta is (L, Y, 1)
-            samples_vals = median_dict['samples'][loc, last_year_idx, :]  # samples is (L, Y, M)
-            transformed_samples_vals = median_dict['transformed_samples'][loc, last_year_idx, :]  # transformed_samples is (L, Y, M)
-            y_obs_vals = training_data.y[loc, last_year_idx, :]  # y_obs is (L, Y, M)
+            # Get arrays for this location/year
+            transformed_samples = median_dict['transformed_samples'][loc, last_year_idx, :]
+            y_obs = training_data.y[loc, last_year_idx, :]
+            seasonal_pattern_plus_sampled_eta = self._seasonal_pattern[loc, 0, :] + sampled_eta_val
+            transformed_minus_epsilon = transformed_samples - epsilon
 
-            # Calculate epsilon = sampled_eta - eta
-            epsilon = sampled_eta_vals - eta_vals
+            # Add monthly varying variables
+            for month in range(M):
+                seasonal_month = month + 1
+                data.extend([
+                    {'location': location_name, 'seasonal_month': seasonal_month,
+                     'value': transformed_samples[month], 'variable': 'transformed_samples',
+                     'line_type': 'solid'},
+                    {'location': location_name, 'seasonal_month': seasonal_month,
+                     'value': transformed_minus_epsilon[month], 'variable': 'transformed_samples - epsilon',
+                     'line_type': 'solid'},
+                    {'location': location_name, 'seasonal_month': seasonal_month,
+                     'value': seasonal_pattern_plus_sampled_eta[month], 'variable': 'seasonal_pattern + sampled_eta',
+                     'line_type': 'solid'},
+                    {'location': location_name, 'seasonal_month': seasonal_month,
+                     'value': y_obs[month], 'variable': 'y_obs',
+                     'line_type': 'solid'},
+                    {'location': location_name, 'seasonal_month': seasonal_month,
+                     'value': eta_val, 'variable': 'eta',
+                     'line_type': 'dashed'},
+                    {'location': location_name, 'seasonal_month': seasonal_month,
+                     'value': sampled_eta_val, 'variable': 'sampled_eta',
+                     'line_type': 'dotted'}
+                ])
 
-            # Calculate transformed_samples - epsilon
-            transformed_samples_minus_epsilon = transformed_samples_vals - epsilon
+        df = pd.DataFrame(data)
 
-            # Calculate seasonal pattern + sampled_eta
-            seasonal_pattern_plus_sampled_eta = self._seasonal_pattern[loc, 0, :] + sampled_eta_vals
+        # Create chart without interactive selection to avoid duplication issues
+        base = alt.Chart(df)
 
-            # Plot lines
-            ax.plot(seasonal_months, transformed_samples_vals, 'o-', label='transformed_samples', linewidth=2, markersize=4)
-            ax.plot(seasonal_months, transformed_samples_minus_epsilon, 's-', label='transformed_samples - epsilon', linewidth=2, markersize=4)
-            ax.plot(seasonal_months, seasonal_pattern_plus_sampled_eta, 'd-', label='seasonal_pattern + sampled_eta', linewidth=2, markersize=4)
-            ax.plot(seasonal_months, y_obs_vals, '^-', label='y_obs', linewidth=2, markersize=4)
+        # Create separate layers for different line types
+        solid_lines = base.transform_filter(
+            alt.datum.line_type == 'solid'
+        ).mark_line(point=True).encode(
+            x=alt.X('seasonal_month:O', title='Seasonal Month'),
+            y=alt.Y('value:Q', title='Value'),
+            color=alt.Color('variable:N', title='Variable')
+        )
 
-            # eta and sampled_eta are constants across months for a given location/year, so plot as horizontal lines
-            ax.axhline(y=eta_vals, color='red', linestyle='--', label='eta', linewidth=2)
-            ax.axhline(y=sampled_eta_vals, color='orange', linestyle=':', label='sampled_eta', linewidth=2)
+        dashed_lines = base.transform_filter(
+            alt.datum.line_type == 'dashed'
+        ).mark_line(strokeDash=[5, 5]).encode(
+            x='seasonal_month:O',
+            y='value:Q',
+            color='variable:N'
+        )
 
-            # Formatting
-            ax.set_title(f'Location {loc} - Median Parameter Values (Last Year)', fontweight='bold')
-            ax.set_xlabel('Seasonal Month')
-            ax.set_ylabel('Value')
-            ax.grid(True, alpha=0.3)
-            ax.legend()
-            ax.set_xticks(seasonal_months)
+        dotted_lines = base.transform_filter(
+            alt.datum.line_type == 'dotted'
+        ).mark_line(strokeDash=[2, 2]).encode(
+            x='seasonal_month:O',
+            y='value:Q',
+            color='variable:N'
+        )
 
-        plt.tight_layout()
-        plt.savefig('seasonal_regression_explanation.png', dpi=300, bbox_inches='tight')
-        plt.show()
+        # Combine layers and facet
+        chart = (solid_lines + dashed_lines + dotted_lines).facet(
+            column=alt.Column('location:N', title=None)
+        ).resolve_scale(
+            color='independent'
+        ).properties(
+            title='Median Parameter Values (Last Year)'
+        )
+
+        chart.save('seasonal_regression_explanation.html')
+        chart.show()
 
     def plot_trace(self, idata, output_file=None):
         """Plot trace plots for all alpha (intercept) and beta (slope) parameters."""
@@ -333,7 +368,7 @@ class SeasonalRegression:
         plt.close()
 
 def test_seasonal_regression(df: pd.DataFrame):
-    model = SeasonalRegression(mcmc_params=MCMCParams().debug(), lag=7, prediction_length=7)
+    model = SeasonalRegression(mcmc_params=MCMCParams().debug(), lag=3, prediction_length=3)
     preds = model.predict(df)
 
 def test_sample_broadcasting():
