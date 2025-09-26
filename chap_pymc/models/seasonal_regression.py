@@ -1,3 +1,6 @@
+import dataclasses
+from statistics import median
+
 import cyclopts
 import numpy as np
 import pandas as pd
@@ -31,6 +34,12 @@ def create_output(training_pdf, posterior_samples, n_samples=100):
 
     return pd.DataFrame(rows, columns=colnames)
 
+@dataclasses.dataclass
+class TrainingArrays:
+    X: np.ndarray  # (locations, seasons, months, lag)
+    y: np.ndarray  # (locations, seasons, months)
+    seasonal_pattern: np.ndarray
+    locs: np.ndarray
 
 class SeasonalRegression:
     features = ['mean_temperature']
@@ -51,6 +60,7 @@ class SeasonalRegression:
         base = (y - mean_y) #/ np.maximum(std_y, 0.001)  # L, Y, M
         std_per_mont_per_loc = np.nanstd(base, axis=1, keepdims=True)  # L, 1, M
         seasonal_pattern = np.nanmean(base, axis=1, keepdims=True)
+        self._seasonal_pattern = seasonal_pattern
         last_month = seasonal_data.last_seasonal_month
         temp = X['mean_temperature'][:, 1:, last_month-self._lag+1:last_month+1]
         temp = (temp - np.nanmean(temp)) / np.nanstd(temp)  # Standardize predictor
@@ -60,7 +70,7 @@ class SeasonalRegression:
             alpha = pm.Normal('intercept', mu=0, sigma=10, shape=(L, 1, n_outcomes))
             beta = pm.Normal('slope', mu=0, sigma=10, shape=(self._lag, n_outcomes))
 
-            sigma = pm.HalfNormal('sigma', sigma=1)
+            sigma = pm.HalfNormal('sigma', sigma=5)
             eta = pm.Deterministic('eta',
                                    alpha + (temp[..., :self._lag] @ beta[:self._lag]))
 
@@ -86,10 +96,72 @@ class SeasonalRegression:
 
         posterior_samples = idata.posterior['transformed_samples'].stack(samples=("chain", "draw")).values[:, -1, last_month+1:last_month+self._prediction_length+1]
         preds = np.expm1(posterior_samples)
+        self.set_explanation_plots(
+            TrainingArrays(X=temp, y=y, seasonal_pattern=seasonal_pattern, locs=mean_y),
+            idata)
+
         if return_idata:
             return create_output(training_data, preds), idata
         else:
             return create_output(training_data, preds)
+
+    def set_explanation_plots(self, training_data: TrainingArrays, idata):
+        param_names = ['eta', 'sampled_eta', 'samples', 'transformed_samples']
+        median_dict = {name: idata.posterior[name].median(dim=['chain', 'draw']).values for name in param_names}
+
+        L, Y, M = training_data.y.shape  # Locations, Years, Months
+
+        # Create one subplot per location
+        fig, axes = plt.subplots(1, L, figsize=(6*L, 6))
+        if L == 1:
+            axes = [axes]
+
+        # Use months 1-12 as x-axis (seasonal_month)
+        seasonal_months = np.arange(1, M + 1)
+
+        for loc in range(L):
+            ax = axes[loc]
+
+            # Get data for the last year (Y-1)
+            last_year_idx = Y - 1
+
+            # Extract median values for this location and last year
+            eta_vals = median_dict['eta'][loc, last_year_idx, 0]  # eta is (L, Y, 1)
+            sampled_eta_vals = median_dict['sampled_eta'][loc, last_year_idx, 0]  # sampled_eta is (L, Y, 1)
+            samples_vals = median_dict['samples'][loc, last_year_idx, :]  # samples is (L, Y, M)
+            transformed_samples_vals = median_dict['transformed_samples'][loc, last_year_idx, :]  # transformed_samples is (L, Y, M)
+            y_obs_vals = training_data.y[loc, last_year_idx, :]  # y_obs is (L, Y, M)
+
+            # Calculate epsilon = sampled_eta - eta
+            epsilon = sampled_eta_vals - eta_vals
+
+            # Calculate transformed_samples - epsilon
+            transformed_samples_minus_epsilon = transformed_samples_vals - epsilon
+
+            # Calculate seasonal pattern + sampled_eta
+            seasonal_pattern_plus_sampled_eta = self._seasonal_pattern[loc, 0, :] + sampled_eta_vals
+
+            # Plot lines
+            ax.plot(seasonal_months, transformed_samples_vals, 'o-', label='transformed_samples', linewidth=2, markersize=4)
+            ax.plot(seasonal_months, transformed_samples_minus_epsilon, 's-', label='transformed_samples - epsilon', linewidth=2, markersize=4)
+            ax.plot(seasonal_months, seasonal_pattern_plus_sampled_eta, 'd-', label='seasonal_pattern + sampled_eta', linewidth=2, markersize=4)
+            ax.plot(seasonal_months, y_obs_vals, '^-', label='y_obs', linewidth=2, markersize=4)
+
+            # eta and sampled_eta are constants across months for a given location/year, so plot as horizontal lines
+            ax.axhline(y=eta_vals, color='red', linestyle='--', label='eta', linewidth=2)
+            ax.axhline(y=sampled_eta_vals, color='orange', linestyle=':', label='sampled_eta', linewidth=2)
+
+            # Formatting
+            ax.set_title(f'Location {loc} - Median Parameter Values (Last Year)', fontweight='bold')
+            ax.set_xlabel('Seasonal Month')
+            ax.set_ylabel('Value')
+            ax.grid(True, alpha=0.3)
+            ax.legend()
+            ax.set_xticks(seasonal_months)
+
+        plt.tight_layout()
+        plt.savefig('seasonal_regression_explanation.png', dpi=300, bbox_inches='tight')
+        plt.show()
 
     def plot_trace(self, idata, output_file=None):
         """Plot trace plots for all alpha (intercept) and beta (slope) parameters."""

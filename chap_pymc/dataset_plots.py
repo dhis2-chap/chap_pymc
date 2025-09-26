@@ -1,3 +1,4 @@
+import pathlib
 from abc import ABC, abstractmethod
 from pathlib import Path
 import altair as alt
@@ -148,6 +149,7 @@ class StandardizedFeaturePlot(DatasetPlot):
         ).properties(
             title="Multiple Feature Selection (Click legend items to toggle)"
         )
+
 
 def test_standardized_feature_plot(df: pd.DataFrame):
     df['ideal_temperature'] = (df['mean_temperature'] > 25) & (df['mean_temperature']<= 30)  # Assuming mean_temperature is the predictor
