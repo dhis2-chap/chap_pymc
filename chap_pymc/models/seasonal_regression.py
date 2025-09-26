@@ -12,7 +12,8 @@ from chap_pymc.mcmc_params import MCMCParams
 from chap_pymc.seasonal_transform import SeasonalTransform
 
 
-def create_output(training_pdf, posterior_samples, n_samples=100):
+def create_output(training_pdf, posterior_samples, n_samples=1000):
+    n_samples = min(n_samples, posterior_samples.shape[-1])
     horizon = posterior_samples.shape[-2]
     locations = training_pdf['location'].unique()
     last_time_idx = training_pdf['time_period'].max()
@@ -75,9 +76,9 @@ class SeasonalRegression:
             eta = pm.Deterministic('eta',
                                    alpha + (temp[..., :self._lag] @ beta[:self._lag]))
             scale = pm.HalfNormal('scale', sigma=5, shape=(L, Y, 1))
+
             # Maybe clearer to just add epsilon noise here
             sampled_eta = pm.Normal('sampled_eta', mu=eta, sigma=sigma, shape=(L, Y, n_outcomes))
-
 
             mu = sampled_eta[..., [0]]
 
