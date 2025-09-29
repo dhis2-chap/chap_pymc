@@ -1,5 +1,6 @@
 import dataclasses
 from statistics import median
+from typing import Any
 
 import cyclopts
 import numpy as np
@@ -41,7 +42,7 @@ class TrainingArrays:
     X: np.ndarray  # (locations, seasons, months, lag)
     y: np.ndarray  # (locations, seasons, months)
     seasonal_pattern: np.ndarray
-    locs: np.ndarray
+    #locs: np.ndarray
 
 class SeasonalRegression:
     features = ['mean_temperature']
@@ -53,33 +54,31 @@ class SeasonalRegression:
     def predict(self, training_data: pd.DataFrame, return_idata=False):
         training_data['y'] = np.log1p(training_data['disease_cases']).interpolate()
         seasonal_data = SeasonalTransform(training_data, min_prev_months=self._lag, min_post_months=self._prediction_length)
+        temp = self.create_X(seasonal_data)
         y = seasonal_data['y']
         y = y[:, 1:]
-        X = {feature: seasonal_data[feature] for feature in self.features}
-
         L, Y, M = y.shape  # Locations, Years, Months
-        mean_y = np.nanmean(y, axis=-1, keepdims=True) # L, Y, 1
-        base = (y - mean_y) #/ np.maximum(std_y, 0.001)  # L, Y, M
-        std_per_mont_per_loc = np.nanstd(base, axis=1, keepdims=True)  # L, 1, M
-        seasonal_pattern = np.nanmean(base, axis=1, keepdims=True)
+
+        # TODO: find a way to hide these in a method. Currently _tmp_mean_y is used for plots. Only for standardization
+        seasonal_pattern, std_per_mont_per_loc = self.get_seasonal_pattern(y)
+
         self._seasonal_pattern = seasonal_pattern
+
         last_month = seasonal_data.last_seasonal_month
-        temp = X['mean_temperature'][:, 1:, last_month-self._lag+1:last_month+1]
-        temp = (temp - np.nanmean(temp)) / np.nanstd(temp)  # Standardize predictor
         n_outcomes = 1  # mean only
         with pm.Model() as model:
             #Regression
-            alpha = pm.Normal('intercept', mu=0, sigma=10, shape=(L, 1, n_outcomes))
+            alpha = pm.Normal('intercept', mu=0, sigma=10, shape=(L, 1, n_outcomes)) # SHould this be global?
             beta = pm.Normal('slope', mu=0, sigma=10, shape=(self._lag, n_outcomes))
 
             sigma = pm.HalfNormal('sigma', sigma=5)
             eta = pm.Deterministic('eta',
                                    alpha + (temp[..., :self._lag] @ beta[:self._lag]))
+
             scale = pm.HalfNormal('scale', sigma=5, shape=(L, Y, 1))
 
             # Maybe clearer to just add epsilon noise here
             sampled_eta = pm.Normal('sampled_eta', mu=eta, sigma=sigma, shape=(L, Y, n_outcomes))
-
             mu = sampled_eta[..., [0]]
 
             samples = pm.Normal('samples',
@@ -101,7 +100,7 @@ class SeasonalRegression:
         posterior_samples = idata.posterior['transformed_samples'].stack(samples=("chain", "draw")).values[:, -1, last_month+1:last_month+self._prediction_length+1]
         preds = np.expm1(posterior_samples)
         self.set_explanation_plots(
-            TrainingArrays(X=temp, y=y, seasonal_pattern=seasonal_pattern, locs=mean_y),
+            TrainingArrays(X=temp, y=y, seasonal_pattern=seasonal_pattern),
             idata)
 
         if return_idata:
@@ -109,10 +108,25 @@ class SeasonalRegression:
         else:
             return create_output(training_data, preds)
 
-    def _get_longform_trace(self, idata, param_names: list[str]):
+    def get_seasonal_pattern(self, y: np.ndarray[tuple[Any, ...], Any]) -> tuple[Any, Any]:
+        _tmp_mean_y = np.nanmean(y, axis=-1, keepdims=True)  # L, Y, 1
+        scale_y = np.nanstd(y, axis=-1, keepdims=True)
+        base = (y - _tmp_mean_y) / np.maximum(scale_y, 0.001)  # L, Y, M
 
-        #df = idata.posterior[param_name].stack(samples=("chain", "draw")).to_dataframe().reset_index()
-        #return df
+        # TODO: standardize / std
+        std_per_mont_per_loc = np.nanstd(base, axis=1, keepdims=True)  # L, 1, M
+        seasonal_pattern = np.nanmean(base, axis=1, keepdims=True)
+        return seasonal_pattern, std_per_mont_per_loc
+
+    def create_X(self, seasonal_data: SeasonalTransform) -> np.ndarray[tuple[Any, ...], np.dtype[np.float64]]:
+        last_month = seasonal_data.last_seasonal_month
+        X = {feature: seasonal_data[feature] for feature in self.features}
+        temp = X['mean_temperature'][:, 1:, last_month - self._lag + 1:last_month + 1]
+        temp = (temp - np.nanmean(temp)) / np.nanstd(temp)  # Standardize predictor
+        return temp
+
+    def _get_longform_trace(self, idata, param_names: list[str]):
+        ...
 
     def set_explanation_plots(self, training_data: TrainingArrays, idata):
         param_names = ['eta', 'sampled_eta', 'samples', 'transformed_samples']
@@ -382,7 +396,6 @@ def test_sample_broadcasting():
     print(means)
     samples = pm.draw(pm.Normal.dist(mu=means, sigma=0.1, shape=(2, 4, 3)))
     print(samples)
-    assert False
 
 def main(csv_file: str):
     df = pd.read_csv(csv_file)
