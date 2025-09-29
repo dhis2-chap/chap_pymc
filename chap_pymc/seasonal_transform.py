@@ -31,6 +31,7 @@ class SeasonalTransform:
         self.last_seasonal_month+=self._pad_left
         self.first_seasonal_month+=self._pad_left
         self._pad_right = max(self.last_seasonal_month+min_post_months-12+1, 0) if min_post_months is not None else 0
+        self._remove_first_year = self.first_seasonal_month > 0
 
     def _find_min_month(self):
         means = ((month, group['y'].mean()) for month, group in self._df.groupby('month'))
@@ -62,7 +63,7 @@ class SeasonalTransform:
             data_array = np.concatenate([data_array, pad_array], axis=-1)
         if self._pad_left:
             data_array = np.concatenate([left_pad_array, data_array], axis=-1)
-        return data_array
+        return data_array[:, 1:]
 
 
 def test_seasonal_transform(df: pd.DataFrame):

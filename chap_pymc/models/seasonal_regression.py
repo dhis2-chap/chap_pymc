@@ -56,22 +56,20 @@ class SeasonalRegression:
         seasonal_data = SeasonalTransform(training_data, min_prev_months=self._lag, min_post_months=self._prediction_length)
         temp = self.create_X(seasonal_data)
         y = seasonal_data['y']
-        y = y[:, 1:]
         L, Y, M = y.shape  # Locations, Years, Months
 
-        # TODO: find a way to hide these in a method. Currently _tmp_mean_y is used for plots. Only for standardization
         seasonal_pattern, std_per_mont_per_loc = self.get_seasonal_pattern(y)
 
-        self._seasonal_pattern = seasonal_pattern
-
         last_month = seasonal_data.last_seasonal_month
-        n_outcomes = 1  # mean only
+        #TODO: create all variables here that we want to plot later
         with pm.Model() as model:
             #Regression
+            n_outcomes = 1  # mean only
             alpha = pm.Normal('intercept', mu=0, sigma=10, shape=(L, 1, n_outcomes)) # SHould this be global?
             beta = pm.Normal('slope', mu=0, sigma=10, shape=(self._lag, n_outcomes))
 
             sigma = pm.HalfNormal('sigma', sigma=5)
+
             eta = pm.Deterministic('eta',
                                    alpha + (temp[..., :self._lag] @ beta[:self._lag]))
 
@@ -79,8 +77,10 @@ class SeasonalRegression:
 
             # Maybe clearer to just add epsilon noise here
             sampled_eta = pm.Normal('sampled_eta', mu=eta, sigma=sigma, shape=(L, Y, n_outcomes))
-            mu = sampled_eta[..., [0]]
 
+
+            mu = sampled_eta[..., [0]]
+            pm.Deterministic('transformed_pattern', seasonal_pattern * scale + mu)
             samples = pm.Normal('samples',
                                 mu=seasonal_pattern,
                                 sigma=std_per_mont_per_loc,
@@ -121,7 +121,7 @@ class SeasonalRegression:
     def create_X(self, seasonal_data: SeasonalTransform) -> np.ndarray[tuple[Any, ...], np.dtype[np.float64]]:
         last_month = seasonal_data.last_seasonal_month
         X = {feature: seasonal_data[feature] for feature in self.features}
-        temp = X['mean_temperature'][:, 1:, last_month - self._lag + 1:last_month + 1]
+        temp = X['mean_temperature'][:, :, last_month - self._lag + 1:last_month + 1]
         temp = (temp - np.nanmean(temp)) / np.nanstd(temp)  # Standardize predictor
         return temp
 
@@ -129,7 +129,7 @@ class SeasonalRegression:
         ...
 
     def set_explanation_plots(self, training_data: TrainingArrays, idata):
-        param_names = ['eta', 'sampled_eta', 'samples', 'transformed_samples']
+        param_names = ['eta', 'sampled_eta', 'samples', 'transformed_samples', 'transformed_pattern']
         median_dict = {name: idata.posterior[name].median(dim=['chain', 'draw']).values for name in param_names}
 
         L, Y, M = training_data.y.shape  # Locations, Years, Months
@@ -148,8 +148,9 @@ class SeasonalRegression:
 
             # Get arrays for this location/year
             transformed_samples = median_dict['transformed_samples'][loc, last_year_idx, :]
+            transformed_pattern = median_dict['transformed_pattern'][loc, last_year_idx, :]
             y_obs = training_data.y[loc, last_year_idx, :]
-            seasonal_pattern_plus_sampled_eta = self._seasonal_pattern[loc, 0, :] + sampled_eta_val
+            seasonal_pattern_plus_sampled_eta = training_data.seasonal_pattern[loc, 0, :] + sampled_eta_val
             transformed_minus_epsilon = transformed_samples - epsilon
 
             # Add monthly varying variables
@@ -160,20 +161,23 @@ class SeasonalRegression:
                      'value': transformed_samples[month], 'variable': 'transformed_samples',
                      'line_type': 'solid'},
                     {'location': location_name, 'seasonal_month': seasonal_month,
-                     'value': transformed_minus_epsilon[month], 'variable': 'transformed_samples - epsilon',
+                     'value': transformed_pattern[month], 'variable': 'transformed_pattern',
                      'line_type': 'solid'},
                     {'location': location_name, 'seasonal_month': seasonal_month,
-                     'value': seasonal_pattern_plus_sampled_eta[month], 'variable': 'seasonal_pattern + sampled_eta',
+                     'value': transformed_minus_epsilon[month], 'variable': 'transformed_samples - epsilon',
                      'line_type': 'solid'},
+                    # {'location': location_name, 'seasonal_month': seasonal_month,
+                    #  'value': seasonal_pattern_plus_sampled_eta[month], 'variable': 'seasonal_pattern + sampled_eta',
+                    #  'line_type': 'solid'},
                     {'location': location_name, 'seasonal_month': seasonal_month,
                      'value': y_obs[month], 'variable': 'y_obs',
                      'line_type': 'solid'},
-                    {'location': location_name, 'seasonal_month': seasonal_month,
-                     'value': eta_val, 'variable': 'eta',
-                     'line_type': 'dashed'},
-                    {'location': location_name, 'seasonal_month': seasonal_month,
-                     'value': sampled_eta_val, 'variable': 'sampled_eta',
-                     'line_type': 'dotted'}
+                    # {'location': location_name, 'seasonal_month': seasonal_month,
+                    #  'value': eta_val, 'variable': 'eta',
+                    #  'line_type': 'dashed'},
+                    # {'location': location_name, 'seasonal_month': seasonal_month,
+                    #  'value': sampled_eta_val, 'variable': 'sampled_eta',
+                    #  'line_type': 'dotted'}
                 ])
 
         df = pd.DataFrame(data)
@@ -214,7 +218,7 @@ class SeasonalRegression:
         ).properties(
             title='Median Parameter Values (Last Year)'
         )
-
+        #self._explanation_plots.append(chart)
         chart.save('seasonal_regression_explanation.html')
         chart.show()
 
