@@ -85,9 +85,9 @@ class SeasonalRegression:
             samples = pm.Normal('samples',
                                 mu=seasonal_pattern,
                                 sigma=std_per_mont_per_loc,
-                                shape=(L, Y, M)) # Maybe shape is wrong should be (L, M, Y).reshape(L, Y, M)
+                                shape=(L, Y, M))
 
-            transformed_samples = pm.Deterministic('transformed_samples', samples*scale + mu)
+            transformed_samples = pm.Deterministic('transformed_samples', samples * scale + mu)
             valid_slice = slice(0, -1, 1)
 
             pm.Normal('observed', mu=transformed_samples[:, valid_slice], sigma=0.1, observed=y[:, valid_slice])
@@ -108,6 +108,11 @@ class SeasonalRegression:
             return create_output(training_data, preds), idata
         else:
             return create_output(training_data, preds)
+
+    def _get_longform_trace(self, idata, param_names: list[str]):
+
+        #df = idata.posterior[param_name].stack(samples=("chain", "draw")).to_dataframe().reset_index()
+        #return df
 
     def set_explanation_plots(self, training_data: TrainingArrays, idata):
         param_names = ['eta', 'sampled_eta', 'samples', 'transformed_samples']
