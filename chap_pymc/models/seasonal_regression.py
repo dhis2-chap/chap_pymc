@@ -2,12 +2,15 @@ import dataclasses
 from statistics import median
 from typing import Any
 
+import chap_core
 import cyclopts
 import numpy as np
 import pandas as pd
 import pymc as pm
 import matplotlib.pyplot as plt
 import altair as alt
+from chap_core.assessment.dataset_splitting import train_test_generator
+from chap_core.datatypes import create_tsdataclass
 
 from chap_pymc.mcmc_params import MCMCParams
 from chap_pymc.seasonal_transform import SeasonalTransform
@@ -50,6 +53,11 @@ class SeasonalRegression:
         self._prediction_length = prediction_length
         self._lag = lag
         self._mcmc_params = mcmc_params
+        self._explanation_plots = []
+
+    @property
+    def explanation_plots(self):
+        return self._explanation_plots
 
     def predict(self, training_data: pd.DataFrame, return_idata=False):
         training_data['y'] = np.log1p(training_data['disease_cases']).interpolate()
@@ -68,7 +76,7 @@ class SeasonalRegression:
             alpha = pm.Normal('intercept', mu=0, sigma=10, shape=(L, 1, n_outcomes)) # SHould this be global?
             beta = pm.Normal('slope', mu=0, sigma=10, shape=(self._lag, n_outcomes))
 
-            sigma = pm.HalfNormal('sigma', sigma=5)
+            sigma = pm.HalfNormal('sigma', sigma=10)
 
             eta = pm.Deterministic('eta',
                                    alpha + (temp[..., :self._lag] @ beta[:self._lag]))
@@ -76,11 +84,14 @@ class SeasonalRegression:
             scale = pm.HalfNormal('scale', sigma=5, shape=(L, Y, 1))
 
             # Maybe clearer to just add epsilon noise here
-            sampled_eta = pm.Normal('sampled_eta', mu=eta, sigma=sigma, shape=(L, Y, n_outcomes))
+            epsilon = pm.Normal('epsilon', mu=0, sigma=sigma, shape=(L, Y, n_outcomes))
+            sampled_eta = pm.Deterministic('sampled_eta',eta+epsilon)
+            #sampled_eta = pm.Normal('sampled_eta', mu=eta, sigma=sigma, shape=(L, Y, n_outcomes))
 
 
             mu = sampled_eta[..., [0]]
-            pm.Deterministic('transformed_pattern', seasonal_pattern * scale + mu)
+            pm.Deterministic('transformed_pattern', seasonal_pattern * scale + mu) # For plotting
+
             samples = pm.Normal('samples',
                                 mu=seasonal_pattern,
                                 sigma=std_per_mont_per_loc,
@@ -88,12 +99,12 @@ class SeasonalRegression:
 
             transformed_samples = pm.Deterministic('transformed_samples', samples * scale + mu)
             valid_slice = slice(0, -1, 1)
-
+            last_year_slice = slice(None, last_month+1)
             pm.Normal('observed', mu=transformed_samples[:, valid_slice], sigma=0.1, observed=y[:, valid_slice])
             pm.Normal('y_obs',
-                      mu=transformed_samples[:, -1:, :last_month + 1],
+                      mu=transformed_samples[:, -1:, last_year_slice],
                       sigma=0.1,
-                      observed=y[:, -1:, :last_month + 1])
+                      observed=y[:, -1:, last_year_slice])
 
             idata = pm.sample(**self._mcmc_params.model_dump())
 
@@ -129,7 +140,7 @@ class SeasonalRegression:
         ...
 
     def set_explanation_plots(self, training_data: TrainingArrays, idata):
-        param_names = ['eta', 'sampled_eta', 'samples', 'transformed_samples', 'transformed_pattern']
+        param_names = ['eta', 'sampled_eta', 'samples', 'transformed_samples', 'transformed_pattern', 'epsilon']
         median_dict = {name: idata.posterior[name].median(dim=['chain', 'draw']).values for name in param_names}
 
         L, Y, M = training_data.y.shape  # Locations, Years, Months
@@ -144,22 +155,23 @@ class SeasonalRegression:
             # Get median values for this location and last year
             eta_val = median_dict['eta'][loc, last_year_idx, 0]
             sampled_eta_val = median_dict['sampled_eta'][loc, last_year_idx, 0]
-            epsilon = sampled_eta_val - eta_val
+            #epsilon = sampled_eta_val - eta_val
 
             # Get arrays for this location/year
             transformed_samples = median_dict['transformed_samples'][loc, last_year_idx, :]
             transformed_pattern = median_dict['transformed_pattern'][loc, last_year_idx, :]
+            epsilon = median_dict['epsilon'][loc, last_year_idx, :]
             y_obs = training_data.y[loc, last_year_idx, :]
             seasonal_pattern_plus_sampled_eta = training_data.seasonal_pattern[loc, 0, :] + sampled_eta_val
-            transformed_minus_epsilon = transformed_samples - epsilon
+            transformed_minus_epsilon = transformed_pattern - epsilon
 
             # Add monthly varying variables
             for month in range(M):
                 seasonal_month = month + 1
                 data.extend([
-                    {'location': location_name, 'seasonal_month': seasonal_month,
-                     'value': transformed_samples[month], 'variable': 'transformed_samples',
-                     'line_type': 'solid'},
+                    # {'location': location_name, 'seasonal_month': seasonal_month,
+                    #  'value': transformed_samples[month], 'variable': 'transformed_samples',
+                    #  'line_type': 'solid'},
                     {'location': location_name, 'seasonal_month': seasonal_month,
                      'value': transformed_pattern[month], 'variable': 'transformed_pattern',
                      'line_type': 'solid'},
@@ -219,8 +231,8 @@ class SeasonalRegression:
             title='Median Parameter Values (Last Year)'
         )
         #self._explanation_plots.append(chart)
-        chart.save('seasonal_regression_explanation.html')
-        chart.show()
+        #chart.save('seasonal_regression_explanation.html')
+        self._explanation_plots.append(chart)
 
     def plot_trace(self, idata, output_file=None):
         """Plot trace plots for all alpha (intercept) and beta (slope) parameters."""
@@ -391,9 +403,13 @@ class SeasonalRegression:
 
         plt.close()
 
-def test_seasonal_regression(df: pd.DataFrame):
+
+
+def test_seasonal_regression(large_df: pd.DataFrame):
     model = SeasonalRegression(mcmc_params=MCMCParams().debug(), lag=3, prediction_length=3)
-    preds = model.predict(df)
+    preds = model.predict(large_df)
+    for plot in model.explanation_plots:
+        plot.show()
 
 def test_sample_broadcasting():
     means = np.arange(6).reshape((2, 1, 3))
@@ -401,7 +417,10 @@ def test_sample_broadcasting():
     samples = pm.draw(pm.Normal.dist(mu=means, sigma=0.1, shape=(2, 4, 3)))
     print(samples)
 
-def main(csv_file: str):
+app = cyclopts.App()
+
+@app.command()
+def predict(csv_file: str):
     df = pd.read_csv(csv_file)
     model = SeasonalRegression()
     preds, idata = model.predict(df, return_idata=True)
@@ -412,7 +431,26 @@ def main(csv_file: str):
     model.plot_prediction(idata, df, 'seasonal_regression_predictions.png')
     preds.to_csv('seasonal_regression_output.csv', index=False)
 
+@app.command()
+def explain(csv_file: str, output_folder: str = '.', mcmc_params: MCMCParams = MCMCParams()):
+    dataset = chap_core.data.DataSet.from_csv(csv_file)
+    train_data, test_instances  = train_test_generator(dataset, prediction_length=3, n_test_sets=12)
+    for t, (historic, future, truth) in enumerate(test_instances):
+        df = historic.to_pandas()
+        df.time_period = df.time_period.astype(str)
+        model = SeasonalRegression(mcmc_params=mcmc_params)
+        model.predict(df)
+        assert len(model.explanation_plots)>0
+        for i, plot in enumerate(model.explanation_plots):
+            plot.save(f'{output_folder}/seasonal_regression_explanation_{t}_{i}.html')
+
+
+
+def test_explain(data_path, tmp_path):
+    explain(data_path/'training_data.csv', tmp_path, MCMCParams().debug())
+
+
 
 if __name__ == '__main__':
-    cyclopts.run(main)
+    app()
     #app()
