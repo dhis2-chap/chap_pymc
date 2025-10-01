@@ -1,5 +1,8 @@
 import numpy as np
 import pandas as pd
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class SeasonalTransform:
@@ -28,6 +31,7 @@ class SeasonalTransform:
         self.first_seasonal_month = (total_month.min()) % 12
         self.last_seasonal_month = (total_month.max()) % 12
         self._pad_left = max(0, min_prev_months - self.last_seasonal_month - 1) if min_prev_months is not None else 0
+        logger.info(f"min_prev_months: {min_prev_months} last seasonal month: {self.last_seasonal_month}, pad_left: {self._pad_left}")
         self.last_seasonal_month+=self._pad_left
         self.first_seasonal_month+=self._pad_left
         self._pad_right = max(self.last_seasonal_month+min_post_months-12+1, 0) if min_post_months is not None else 0
@@ -37,6 +41,37 @@ class SeasonalTransform:
         means = ((month, group['y'].mean()) for month, group in self._df.groupby('month'))
         min_month, val  = min(means, key=lambda x: x[1])
         return min_month
+
+    def get_df(self, feature_name, start_year=None):
+        array = self[feature_name]
+        rows = [
+            {
+                'location': loc,
+                'season_idx': season_idx,
+                'seasonal_month': month_idx,
+                feature_name: array[loc_idx, season_idx, month_idx]
+            }
+            for loc_idx, loc in enumerate(self._df['location'].unique())
+            for season_idx in range(start_year, array.shape[1])
+            for month_idx in range(array.shape[2])
+        ]
+        return pd.DataFrame(rows)
+
+
+    def plot_feature(self, feature_name):
+        import altair as alt
+        df = self.get_df(feature_name, start_year=3)
+        chart = alt.Chart(df).mark_line().encode(
+            x='seasonal_month',
+            y=feature_name,
+            color='season_idx:O'
+        ).facet(
+            row=alt.Facet('season_idx:O', title='Season Index'),
+            column=alt.Facet('location:N', title='Location')
+        ).properties(
+            title=f'Seasonal plot of {feature_name} (min month={self._min_month})'
+        )
+        return chart
 
     def __getitem__(self, feature_name) -> np.ndarray:
         locations = self._df['location'].unique()
@@ -60,8 +95,10 @@ class SeasonalTransform:
             if self._pad_left and month_idx+self._pad_left>=n_months and season_idx < n_seasons-1:
                 left_pad_array[loc_idx, season_idx+1, month_idx+self._pad_left-n_months] = row[feature_name]
         if self._pad_right:
+            logger.info(f"Padding {self._pad_right} months to the right")
             data_array = np.concatenate([data_array, pad_array], axis=-1)
         if self._pad_left:
+            logger.info(f"Padding {self._pad_left} months to the left")
             data_array = np.concatenate([left_pad_array, data_array], axis=-1)
         return data_array[:, 1:]
 

@@ -12,6 +12,7 @@ class OutbreakParams:
 
 
 
+
 class LocScalePatternFinder:
     '''
     For each location, find the best yearly location, scale and pattern parameters for a given data set.

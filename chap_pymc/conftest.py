@@ -2,8 +2,7 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
-
-
+from chap_core.spatio_temporal_data.temporal_dataclass import DataSet
 
 
 @pytest.fixture
@@ -19,3 +18,7 @@ def data_path() -> Path:
 def large_df(data_path) -> pd.DataFrame:
     p = data_path / 'thailand.csv'
     return pd.read_csv(p)
+
+@pytest.fixture
+def thailand_ds(data_path) -> pd.DataFrame:
+    return DataSet.from_csv(data_path / 'thailand.csv')

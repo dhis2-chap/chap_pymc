@@ -22,7 +22,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Mathematics",
     "Topic :: Scientific/Engineering :: Medical Science Apps.",
 ]
-requires-python = ">=3.9"
+requires-python = ">=3.12"
 dependencies = [
     "pymc>=5.0.0",
     "pytensor>=2.0.0",
@@ -33,7 +33,9 @@ dependencies = [
     "arviz>=0.15.0",
     "cyclopts>=2.0.0",
     "pyyaml>=6.0",
-    "altair"
+    "altair",
+    "pytest>=8.4.2",
+    "chap-core>=1.0.17",
 ]
 
 [project.optional-dependencies]
