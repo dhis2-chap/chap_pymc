@@ -24,6 +24,14 @@ from chap_pymc.mcmc_params import MCMCParams
 from chap_pymc.seasonal_transform import SeasonalTransform
 
 
+@dataclasses.dataclass
+class ModelInput:
+    X: np.ndarray
+    y: np.ndarray
+    seasonal_pattern: np.ndarray
+    seasonal_errors: np.ndarray
+    last_month: int
+
 def create_output(training_pdf, posterior_samples, n_samples=1000):
     n_samples = min(n_samples, posterior_samples.shape[-1])
     horizon = posterior_samples.shape[-2]
@@ -75,60 +83,67 @@ class SeasonalRegression:
         temp = self.create_X(seasonal_data)
         y = seasonal_data['y']
         L, Y, M = y.shape  # Locations, Years, Months
-
         seasonal_pattern, std_per_mont_per_loc = self.get_seasonal_pattern(y)
-
         last_month = seasonal_data.last_seasonal_month
         #TODO: create all variables here that we want to plot later
-        with pm.Model() as model:
-            #Regression
-            n_outcomes = 1  # mean only
-            alpha = pm.Normal('intercept', mu=0, sigma=10, shape=(L, 1, n_outcomes)) # SHould this be global?
-            beta = pm.Normal('slope', mu=0, sigma=10, shape=(self._lag, n_outcomes))
-
-            # sigma = pm.HalfNormal('sigma', sigma=10, shape=(L, 1, 1))
-
-
-            eta = pm.Deterministic('eta',
-                                   alpha + (temp[..., :self._lag] @ beta[:self._lag]))
-
-            scale = pm.LogNormal('scale', sigma=20, shape=(L, Y, 1))
-
-            # Maybe clearer to just add epsilon noise here
-            epsilon = pm.Normal('epsilon', mu=0, sigma=40, shape=(L, Y, n_outcomes))
-            sampled_eta = pm.Deterministic('sampled_eta',eta+epsilon)
-            #sampled_eta = pm.Normal('sampled_eta', mu=eta, sigma=sigma, shape=(L, Y, n_outcomes))
-
-
-            mu = sampled_eta[..., [0]]
-            pm.Deterministic('transformed_pattern', seasonal_pattern * scale + mu) # For plotting
-
-            samples = pm.Normal('samples',
-                                mu=seasonal_pattern,
-                                sigma=std_per_mont_per_loc,
-                                shape=(L, Y, M))
-
-            transformed_samples = pm.Deterministic('transformed_samples', samples * scale + mu)
-            valid_slice = slice(0, -1, 1)
-            last_year_slice = slice(None, last_month+1)
-            pm.Normal('observed', mu=transformed_samples[:, valid_slice], sigma=0.1, observed=y[:, valid_slice])
-            pm.Normal('y_obs',
-                      mu=transformed_samples[:, -1:, last_year_slice],
-                      sigma=0.1,
-                      observed=y[:, -1:, last_year_slice])
-
+        model_input = ModelInput(X=temp, y=y,
+                                 seasonal_pattern=seasonal_pattern,
+                                 seasonal_errors=std_per_mont_per_loc,
+                                 last_month=last_month)
+        with pm.Model() as _:
+            self.define_model(model_input)
             idata = pm.sample(**self._mcmc_params.model_dump())
 
         posterior_samples = idata.posterior['transformed_samples'].stack(samples=("chain", "draw")).values[:, -1, last_month+1:last_month+self._prediction_length+1]
         preds = np.expm1(posterior_samples)
-        self.set_explanation_plots(
-            TrainingArrays(X=temp, y=y, seasonal_pattern=seasonal_pattern),
-            idata)
+        for i in range(1, Y):
+            self.set_explanation_plots(
+            model_input,
+            idata,
+            year_idx=Y-i
+        )
+
 
         if return_idata:
             return create_output(training_data, preds), idata
         else:
             return create_output(training_data, preds)
+
+    def define_model(self, model_input: ModelInput) -> int:
+        L, Y, M = model_input.y.shape
+        n_outcomes = 1  # mean only
+        alpha = pm.Normal('intercept', mu=0, sigma=10, shape=(L, 1, n_outcomes))  # SHould this be global?
+        beta = pm.Normal('slope', mu=0, sigma=10, shape=(self._lag, n_outcomes))
+
+        # sigma = pm.HalfNormal('sigma', sigma=10, shape=(L, 1, 1))
+
+        eta = pm.Deterministic('eta',
+                               alpha + (model_input.X[..., :self._lag] @ beta[:self._lag]))
+
+        scale = pm.LogNormal('scale', sigma=100, shape=(L, Y, 1))
+
+        # Maybe clearer to just add epsilon noise here
+        epsilon = pm.Normal('epsilon', mu=0, sigma=40, shape=(L, Y, n_outcomes))
+        sampled_eta = pm.Deterministic('sampled_eta', eta + epsilon)
+        # sampled_eta = pm.Normal('sampled_eta', mu=eta, sigma=sigma, shape=(L, Y, n_outcomes))
+
+        mu = sampled_eta[..., [0]]
+        pm.Deterministic('transformed_pattern', model_input.seasonal_pattern * scale + mu)  # For plotting
+
+        samples = pm.Normal('samples',
+                            mu=model_input.seasonal_pattern,
+                            sigma=model_input.seasonal_errors,
+                            shape=(L, Y, M))
+
+        transformed_samples = pm.Deterministic('transformed_samples', samples * scale + mu)
+        valid_slice = slice(0, -1, 1)
+        last_year_slice = slice(None, model_input.last_month + 1)
+        pm.Normal('observed', mu=transformed_samples[:, valid_slice], sigma=0.1, observed=model_input.y[:, valid_slice])
+        pm.Normal('y_obs',
+                  mu=transformed_samples[:, -1:, last_year_slice],
+                  sigma=0.1,
+                  observed=model_input.y[:, -1:, last_year_slice])
+        return Y
 
     def get_seasonal_pattern(self, y: np.ndarray[tuple[Any, ...], Any]) -> tuple[Any, Any]:
         loc_y = np.nanmean(y, axis=-1, keepdims=True)  # L, Y, 1
@@ -154,12 +169,12 @@ class SeasonalRegression:
     def _get_longform_trace(self, idata, param_names: list[str]):
         ...
 
-    def set_explanation_plots(self, training_data: TrainingArrays, idata):
+    def set_explanation_plots(self, training_data: ModelInput, idata, year_idx=None):
         param_names = ['eta', 'sampled_eta', 'samples', 'transformed_samples', 'transformed_pattern', 'epsilon', 'scale']
         median_dict = {name: idata.posterior[name].median(dim=['chain', 'draw']).values for name in param_names}
 
         L, Y, M = training_data.y.shape  # Locations, Years, Months
-        last_year_idx = Y - 1
+        plot_year_idx = Y - 1 if year_idx is None else year_idx
 
         # Create data in long format for Altair
         data = []
@@ -167,20 +182,20 @@ class SeasonalRegression:
         for loc in range(L):
             location_name = f'Location {loc}'
 
-            # Get median values for this location and last year
-            eta_val = median_dict['eta'][loc, last_year_idx, 0]
-            sampled_eta_val = median_dict['sampled_eta'][loc, last_year_idx, 0]
-            scale_val = median_dict['scale'][loc, last_year_idx, 0]
+            # Get median values for this location and specified year
+            eta_val = median_dict['eta'][loc, plot_year_idx, 0]
+            sampled_eta_val = median_dict['sampled_eta'][loc, plot_year_idx, 0]
+            scale_val = median_dict['scale'][loc, plot_year_idx, 0]
             mu_val = sampled_eta_val  # mu is sampled_eta for the last dimension
 
             # Update location name to include median scale and mu
             location_name = f'Location {loc} (scale={scale_val:.3f}, μ={mu_val:.3f})'
 
             # Get arrays for this location/year
-            transformed_samples = median_dict['transformed_samples'][loc, last_year_idx, :]
-            transformed_pattern = median_dict['transformed_pattern'][loc, last_year_idx, :]
-            epsilon = median_dict['epsilon'][loc, last_year_idx, :]
-            y_obs = training_data.y[loc, last_year_idx, :]
+            transformed_samples = median_dict['transformed_samples'][loc, plot_year_idx, :]
+            transformed_pattern = median_dict['transformed_pattern'][loc, plot_year_idx, :]
+            epsilon = median_dict['epsilon'][loc, plot_year_idx, :]
+            y_obs = training_data.y[loc, plot_year_idx, :]
             seasonal_pattern_plus_sampled_eta = training_data.seasonal_pattern[loc, 0, :] + sampled_eta_val
             transformed_minus_epsilon = transformed_pattern - epsilon
 
@@ -247,7 +262,7 @@ class SeasonalRegression:
         ).resolve_scale(
             color='independent'
         ).properties(
-            title='Median Parameter Values (Last Year)'
+            title=f'Median Parameter Values (Year {plot_year_idx})'
         )
         #self._explanation_plots.append(chart)
         #chart.save('seasonal_regression_explanation.html')
@@ -445,6 +460,43 @@ def test_begin_season(thai_begin_season):
     preds = model.predict(thai_begin_season)
     for i, plot in enumerate(model.explanation_plots):
         plot.save(f'begin_season_explanation_{i}.html')
+
+def test_anti_pattern():
+    L, Y, M = 1, 2, 12
+    months = np.array(L*[[np.arange(M)]])
+
+    model_input = ModelInput(
+        X=np.random.rand(L, Y, 3),
+        y=np.sin(2*np.pi*months//12)*np.array([[1], [-1]]),
+        seasonal_pattern=np.sin(2*np.pi*months//12),
+        seasonal_errors=np.ones((L, 1, M)),
+        last_month=10
+    )
+    params = MCMCParams(chains=2, draws=200, tune=500)
+    reg = SeasonalRegression(mcmc_params=params, lag=3, prediction_length=3)
+    with pm.Model() as model:
+        #reg.define_model(model_input)
+        loc = pm.Normal('loc', mu=0, sigma=10, shape=(L,Y, 1))
+        scale = pm.LogNormal('scale', sigma=100, shape=(L, Y, 1))
+        transformed_samples = pm.Deterministic('transformed_pattern', model_input.seasonal_pattern * scale+loc)
+        sigma = pm.HalfNormal('simga', sigma=10)
+        pm.Normal('y_obs', mu=transformed_samples,sigma=sigma, observed=model_input.y)
+        idata = pm.sample(**params.model_dump())
+    posterior = idata.posterior
+    scale = posterior['scale'].median(dim=['chain', 'draw'])
+    all_scales = posterior['scale'].stack(samples=("chain", "draw")).values
+    tp = posterior['transformed_pattern'].median(dim=['chain', 'draw'])[0,-1]
+    plt.plot(tp)
+    plt.plot(model_input.y[0, -1])
+    #plt.plot(model_input.y[0, 0])
+    plt.show()
+    for y in all_scales[0]:
+        plt.hist(y[0], bins=50, density=True)
+    plt.show()
+    #reg.set_explanation_plots(model_input, idata, Y-1)
+    #for i, plot in enumerate(reg.explanation_plots):
+    #    plot.save(f'anti_pattern_explanation_{i}.html')
+    assert scale.values.ravel()[-1]<0.1, scale.values
 
 
 def test_sample_broadcasting():
