@@ -22,7 +22,7 @@ from chap_core.datatypes import create_tsdataclass
 
 from chap_pymc.mcmc_params import MCMCParams
 from chap_pymc.seasonal_transform import SeasonalTransform
-
+TESTING=False
 
 @dataclasses.dataclass
 class ModelInput:
@@ -80,7 +80,7 @@ class SeasonalRegression:
         with pm.Model() as _:
             self.define_stable_model(model_input)
             idata = pm.sample(**self._mcmc_params.model_dump())
-        if False:
+        if TESTING:
             self.pyplot_last_year(model_input, idata)
         last_month = model_input.last_month
         posterior_samples = idata.posterior['transformed_samples'].stack(samples=("chain", "draw")).values[:, -1, last_month+1:last_month+self._prediction_length+1]
@@ -159,8 +159,12 @@ class SeasonalRegression:
 
     def define_stable_model(self, model_input: ModelInput):
         L, Y, M = model_input.y.shape
-        loc = pm.Normal('loc', mu=0, sigma=10, shape=(L, Y, 1))
-        scale = pm.HalfNormal('scale', sigma=100, shape=(L, Y, 1))
+        loc_mu = pm.Normal('loc_mu',mu=0, sigma=10, shape=(L, 1, 1))
+        loc_sigma = pm.HalfNormal('loc_sigma',sigma=10)
+        loc = pm.Normal('loc', mu=loc_mu, sigma=loc_sigma, shape=(L, Y, 1))
+        scale_mu = pm.Normal('scale_mu', mu=1, sigma=1, shape=(L, 1, 1))
+        scale_sigma = pm.HalfNormal('scale_sigma', sigma=1)
+        scale = pm.Normal('scale', scale_mu, sigma=scale_sigma, shape=(L, Y, 1))
         transformed_samples = pm.Deterministic('transformed_samples',
                                                model_input.seasonal_pattern * scale+loc)
         sigma = 1#pm.HalfNormal('sigma', sigma=10)
@@ -185,7 +189,7 @@ class SeasonalRegression:
         # TODO: standardize / std
         std_per_mont_per_loc = np.nanstd(base, axis=1, keepdims=True)  # L, 1, M
         seasonal_pattern = np.nanmean(base, axis=1, keepdims=True)
-        if False:
+        if TESTING:
             for L in range(y.shape[0]):
                 corr = np.corrcoef(scale_y[L, :, 0], loc_y[L, :, 0])
                 plt.scatter(loc_y[L,:,0], scale_y[L, :, 0])
@@ -502,6 +506,8 @@ def thai_begin_season(data_path) -> pd.DataFrame:
 
 
 def test_seasonal_regression(large_df: pd.DataFrame):
+    global TESTING
+    TESTING = True
     model = SeasonalRegression(mcmc_params=MCMCParams(chains=2, tune=200, draws=100), lag=3, prediction_length=3)
     preds, idata = model.predict(large_df, return_idata=True)
     model.plot_prediction(idata, large_df, 'prediction_plot.png')
