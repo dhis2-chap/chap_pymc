@@ -81,7 +81,8 @@ class SeasonalRegression:
             self.define_stable_model(model_input)
             idata = pm.sample(**self._mcmc_params.model_dump())
         if TESTING:
-            self.pyplot_last_year(model_input, idata)
+            self.plot_effect_trace(idata)
+            #self.pyplot_last_year(model_input, idata)
         last_month = model_input.last_month
         posterior_samples = idata.posterior['transformed_samples'].stack(samples=("chain", "draw")).values[:, -1, last_month+1:last_month+self._prediction_length+1]
         preds = np.expm1(posterior_samples)
@@ -157,11 +158,29 @@ class SeasonalRegression:
                   observed=model_input.y[:, -1:, last_year_slice])
         return Y
 
+    def plot_effect_trace(self, idata):
+        beta = idata.posterior['slope'].stack(samples=("chain", "draw")).values
+        print(beta.shape)
+        for lag in range(self._lag):
+            plt.hist(beta[lag, 0, ...], density=True, bins=100)
+            plt.title(f"{lag}")
+            plt.show()
+
     def define_stable_model(self, model_input: ModelInput):
         L, Y, M = model_input.y.shape
+        if model_input.X.size:
+            X = model_input.X
+            alpha = pm.Normal('intercept', mu=0, sigma=10, shape=(L, 1, 1))  # SHould this be global?
+            beta = pm.Normal('slope', mu=0, sigma=10, shape=(X.shape[-1], 1))
+            eta = pm.Deterministic('eta',
+                                   alpha + (X @ beta))
+        else:
+            eta = 0
+
+
         loc_mu = pm.Normal('loc_mu',mu=0, sigma=10, shape=(L, 1, 1))
         loc_sigma = pm.HalfNormal('loc_sigma',sigma=10)
-        loc = pm.Normal('loc', mu=loc_mu, sigma=loc_sigma, shape=(L, Y, 1))
+        loc = pm.Normal('loc', mu=loc_mu, sigma=loc_sigma, shape=(L, Y, 1))+eta
         scale_mu = pm.Normal('scale_mu', mu=1, sigma=1, shape=(L, 1, 1))
         scale_sigma = pm.HalfNormal('scale_sigma', sigma=1)
         scale = pm.Normal('scale', scale_mu, sigma=scale_sigma, shape=(L, Y, 1))
@@ -508,7 +527,7 @@ def thai_begin_season(data_path) -> pd.DataFrame:
 def test_seasonal_regression(large_df: pd.DataFrame):
     global TESTING
     TESTING = True
-    model = SeasonalRegression(mcmc_params=MCMCParams(chains=2, tune=200, draws=100), lag=3, prediction_length=3)
+    model = SeasonalRegression(mcmc_params=MCMCParams(chains=4, tune=200, draws=200), lag=3, prediction_length=3)
     preds, idata = model.predict(large_df, return_idata=True)
     model.plot_prediction(idata, large_df, 'prediction_plot.png')
     for plot in model.explanation_plots:
