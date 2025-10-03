@@ -43,5 +43,20 @@ def dim2():
     plt.show()
     return idata
 
+def dim3():
+    sigma = 0.1
+    mu = np.arange(6).reshape(2, 3)
+    init_dist = pm.Normal.dist(mu, sigma)
+    steps = np.arange(2)*10
+    rw = pm.GaussianRandomWalk.dist(
+                               init_dist=init_dist,
+                               mu=steps[:, np.newaxis],
+                               sigma=sigma,
+                               steps=5,
+                               shape=(2, 3, 6))
 
-idata = dim2()
+    draws = pm.draw(rw, 1)
+    print(draws)
+
+if __name__ == '__main__':
+    dim3()

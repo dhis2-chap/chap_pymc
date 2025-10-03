@@ -3,10 +3,12 @@ from statistics import median
 
 import logging
 
+import pydantic
+
 from chap_pymc.models.loc_scale_finder import LocScalePatternFinder
 
 logging.basicConfig(level=logging.INFO)
-from typing import Any
+from typing import Any, Literal
 
 import chap_core
 import cyclopts
@@ -63,12 +65,16 @@ class TrainingArrays:
     seasonal_pattern: np.ndarray
     #locs: np.ndarray
 
+class ModelParams(pydantic.BaseModel):
+    errors: Literal['iid', 'rw'] = 'rw'
+
 class SeasonalRegression:
     features = ['mean_temperature']
-    def __init__(self, prediction_length=3, lag=3, mcmc_params=MCMCParams()):
+    def __init__(self, prediction_length=3, lag=3, mcmc_params=MCMCParams(), model_params=ModelParams()):
         self._prediction_length = prediction_length
         self._lag = lag
         self._mcmc_params = mcmc_params
+        self._model_params = model_params
         self._explanation_plots = []
 
     @property
@@ -82,16 +88,10 @@ class SeasonalRegression:
             idata = pm.sample(**self._mcmc_params.model_dump())
         if TESTING:
             self.plot_effect_trace(idata)
-            #self.pyplot_last_year(model_input, idata)
+            self.pyplot_last_year(model_input, idata)
         last_month = model_input.last_month
         posterior_samples = idata.posterior['transformed_samples'].stack(samples=("chain", "draw")).values[:, -1, last_month+1:last_month+self._prediction_length+1]
         preds = np.expm1(posterior_samples)
-        #self.set_explanation_plots(
-        #    model_input,
-        #    idata,
-        #    year_idx=-1
-        #    )
-
 
         if return_idata:
             return create_output(training_data, preds), idata
@@ -119,8 +119,6 @@ class SeasonalRegression:
         L, Y, M = model_input.y.shape
         for loc in range(L):
             ...
-
-
 
     def define_model(self, model_input: ModelInput) -> int:
         L, Y, M = model_input.y.shape
@@ -184,9 +182,23 @@ class SeasonalRegression:
         scale_mu = pm.Normal('scale_mu', mu=1, sigma=1, shape=(L, 1, 1))
         scale_sigma = pm.HalfNormal('scale_sigma', sigma=1)
         scale = pm.Normal('scale', scale_mu, sigma=scale_sigma, shape=(L, Y, 1))
-        transformed_samples = pm.Deterministic('transformed_samples',
-                                               model_input.seasonal_pattern * scale+loc)
-        sigma = 1#pm.HalfNormal('sigma', sigma=10)
+
+        transformed_pattern = pm.Deterministic('transformed_pattern',
+                model_input.seasonal_pattern * scale+loc)
+
+        if self._model_params.errors == 'rw':
+            ar_sigma = pm.HalfNormal('ar_sigma', sigma=0.2, shape=(L, 1))
+            init_dist = pm.Normal.dist(np.zeros((L, Y)), ar_sigma)
+            epsilon = pm.GaussianRandomWalk('epsilon',
+                                            init_dist=init_dist,
+                                            mu=0,
+                                            sigma=ar_sigma,
+                                            steps=M-1,
+                                            shape=(L, Y, M))
+        else:
+            epsilon = 0
+        transformed_samples = pm.Deterministic('transformed_samples', transformed_pattern+epsilon)
+        sigma = pm.HalfNormal('sigma', sigma=1, shape=(L, 1, 1))
         pm.Normal('y_obs', mu=transformed_samples[:, :-1],
                   sigma=sigma,
                   observed=model_input.y[:, :-1])
@@ -208,7 +220,7 @@ class SeasonalRegression:
         # TODO: standardize / std
         std_per_mont_per_loc = np.nanstd(base, axis=1, keepdims=True)  # L, 1, M
         seasonal_pattern = np.nanmean(base, axis=1, keepdims=True)
-        if TESTING:
+        if TESTING and False:
             for L in range(y.shape[0]):
                 corr = np.corrcoef(scale_y[L, :, 0], loc_y[L, :, 0])
                 plt.scatter(loc_y[L,:,0], scale_y[L, :, 0])
@@ -219,6 +231,7 @@ class SeasonalRegression:
         return seasonal_pattern, std_per_mont_per_loc
 
     def create_X(self, seasonal_data: SeasonalTransform) -> np.ndarray[tuple[Any, ...], np.dtype[np.float64]]:
+        '''TODO: Actually use multiple features'''
         last_month = seasonal_data.last_seasonal_month
         X = {feature: seasonal_data[feature] for feature in self.features}
         temp = X['mean_temperature'][:, :, last_month - self._lag + 1:last_month + 1]
@@ -409,6 +422,7 @@ class SeasonalRegression:
         plt.close()
 
     def pyplot_last_year(self, model_input, idata):
+        pre_noise = idata.posterior['transformed_pattern'].median(dim=('chain', 'draw')).values
         pred_line = idata.posterior['transformed_samples']
         med = pred_line.median(dim=('chain', 'draw')).values
         upper = pred_line.quantile(0.75, dim=('chain', 'draw')).values
@@ -418,11 +432,13 @@ class SeasonalRegression:
             pred = med[location, -1]
             u = upper[location, -1]
             l = lower[location, -1]
-            plt.plot(pred, label=f'Chain {location+1}', color='blue')
-            plt.plot(u, label=f'Chain {location+1}', color= 'blue')
-            plt.plot(l, label=f'Chain {location+1}', color='blue')
+            plt.plot(pred, label=f'med', color='blue')
+            plt.plot(u, label=f'upper', color= 'blue')
+            plt.plot(l, label=f'lower', color='blue')
+            plt.plot(pre_noise[location, -1], label=f'Prenoise {location+1}', color='green')
             plt.plot(model_input.seasonal_pattern[location,0])
-            plt.plot(model_input.y[location, -1])
+            plt.plot(model_input.y[location, -1], color='red')
+            plt.legend()
             plt.show()
 
 
@@ -527,7 +543,10 @@ def thai_begin_season(data_path) -> pd.DataFrame:
 def test_seasonal_regression(large_df: pd.DataFrame):
     global TESTING
     TESTING = True
-    model = SeasonalRegression(mcmc_params=MCMCParams(chains=4, tune=200, draws=200), lag=3, prediction_length=3)
+    model = SeasonalRegression(mcmc_params=MCMCParams(chains=4, tune=400, draws=400).debug(),
+                               model_params=ModelParams(errors='rw'),
+                               lag=3, prediction_length=3)
+
     preds, idata = model.predict(large_df, return_idata=True)
     model.plot_prediction(idata, large_df, 'prediction_plot.png')
     for plot in model.explanation_plots:
@@ -538,8 +557,8 @@ def test_begin_season(thai_begin_season):
     thai_begin_season = first_group
     model = SeasonalRegression(mcmc_params=MCMCParams(), lag=3, prediction_length=3)
     preds = model.predict(thai_begin_season)
-    for i, plot in enumerate(model.explanation_plots):
-        plot.save(f'begin_season_explanation_{i}.html')
+    #for i, plot in enumerate(model.explanation_plots):
+    #    plot.save(f'begin_season_explanation_{i}.html')
 
 @pytest.fixture()
 def model_input():
@@ -552,6 +571,7 @@ def model_input():
         seasonal_errors=np.ones((L, 1, M)),
         last_month=3
     )
+
 def test_anti_pattern(model_input):
     params = MCMCParams(chains=2, draws=200, tune=500)
     reg = SeasonalRegression(mcmc_params=params, lag=3, prediction_length=3)
@@ -576,6 +596,17 @@ def test_anti_pattern(model_input):
     assert scales[-1] < 0.1, scale.values
     assert scales[0] > 0.5, scale.values
 
+def test_altair():
+    chart = alt.Chart(pd.DataFrame({
+        'x': np.arange(10),
+        'y': np.random.rand(10),
+        'category': ['A'] * 5 + ['B'] * 5
+    })).mark_line().encode(
+        x='x',
+        y='y',
+        color='category'
+    )
+    chart.save('test_altair.png')
 
 def test_sample_broadcasting():
     means = np.arange(6).reshape((2, 1, 3))

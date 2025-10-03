@@ -36,6 +36,7 @@ dependencies = [
     "altair",
     "pytest>=8.4.2",
     "chap-core>=1.0.17",
+    "vl-convert-python>=1.8.0",
 ]
 
 [project.optional-dependencies]
