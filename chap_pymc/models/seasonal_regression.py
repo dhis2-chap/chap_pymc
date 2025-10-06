@@ -1,31 +1,25 @@
 import dataclasses
-from statistics import median
-
 import logging
-
 import pydantic
 
-from chap_pymc.models.loc_scale_finder import LocScalePatternFinder
-
-logging.basicConfig(level=logging.INFO)
 from typing import Any, Literal
 
-import chap_core
 import cyclopts
 import numpy as np
 import pandas as pd
 import pymc as pm
-import matplotlib.pyplot as plt
-import altair as alt
-#alt.data_transformers.enable("vegafusion")
+try:
+    import matplotlib.pyplot as plt
+    import altair as alt
+except ImportError:
+    plt = None
+    alt = None
 import pytest
-from chap_core.assessment.dataset_splitting import train_test_generator
-from chap_core.datatypes import create_tsdataclass
 
 from chap_pymc.mcmc_params import MCMCParams
 from chap_pymc.seasonal_transform import SeasonalTransform
 TESTING=False
-
+logging.basicConfig(level=logging.INFO)
 @dataclasses.dataclass
 class ModelInput:
     X: np.ndarray
@@ -102,7 +96,8 @@ class SeasonalRegression:
         training_data['y'] = np.log1p(training_data['disease_cases']).interpolate()
         seasonal_data = SeasonalTransform(training_data, min_prev_months=self._lag,
                                           min_post_months=self._prediction_length)
-        self._explanation_plots.append(seasonal_data.plot_feature('y'))
+        if TESTING:
+            self._explanation_plots.append(seasonal_data.plot_feature('y'))
 
         X = self.create_X(seasonal_data)
         y = seasonal_data['y']
@@ -532,6 +527,8 @@ class SeasonalRegression:
 
 @pytest.fixture
 def thai_begin_season(data_path) -> pd.DataFrame:
+    import chap_core
+    from chap_core.assessment.dataset_splitting import train_test_generator
     csv_file = data_path / 'thailand.csv'
     dataset = chap_core.data.DataSet.from_csv(csv_file)
     train_data, _ = train_test_generator(dataset, prediction_length=3, n_test_sets=12)
@@ -630,6 +627,8 @@ def predict(csv_file: str):
 
 @app.command()
 def explain(csv_file: str, output_folder: str = '.', mcmc_params: MCMCParams = MCMCParams()):
+    import chap_core
+    from chap_core.assessment.dataset_splitting import train_test_generator
     dataset = chap_core.data.DataSet.from_csv(csv_file)
     train_data, test_instances  = train_test_generator(dataset, prediction_length=3, n_test_sets=12)
     for t, (historic, future, truth) in enumerate(test_instances):
