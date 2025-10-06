@@ -28,6 +28,13 @@ class ModelInput:
     seasonal_errors: np.ndarray
     last_month: int
 
+
+def Deterministic(name, value):
+    if TESTING:
+        return pm.Deterministic(name, value)
+    return value
+
+
 def create_output(training_pdf, posterior_samples, n_samples=1000):
     n_samples = min(n_samples, posterior_samples.shape[-1])
     horizon = posterior_samples.shape[-2]
@@ -92,6 +99,31 @@ class SeasonalRegression:
         else:
             return create_output(training_data, preds)
 
+    def predict_advi(self, training_data: pd.DataFrame, n_samples=1000, n_iterations=100000, return_approx=False):
+        model_input = self.create_model_input(training_data)
+        with pm.Model() as model:
+            self.define_stable_model(model_input)
+            approx = pm.fit(n=n_iterations, method='advi')
+
+        # Draw samples from the approximation
+        posterior_samples = approx.sample(n_samples)
+        print(posterior_samples, type(posterior_samples))
+        # Extract transformed_samples predictions
+        last_month = model_input.last_month
+        #transformed_samples = posterior_samples.posterior['transformed_samples']  # shape: (n_samples, L, Y, M)
+        #pred_samples = transformed_samples[:, :, -1, last_month+1:last_month+self._prediction_length+1]  # (n_samples, L, prediction_length)
+        posterior_samples = posterior_samples.posterior['transformed_samples'].stack(samples=("chain", "draw")).values[
+            :, -1, last_month + 1:last_month + self._prediction_length + 1]
+        #preds = np.expm1(posterior_samples)
+        # Transpose to match expected format (L, prediction_length, n_samples)
+        #pred_samples = np.transpose(pred_samples, (1, 2, 0))
+        preds = np.expm1(posterior_samples)
+
+        if return_approx:
+            return create_output(training_data, preds), approx
+        else:
+            return create_output(training_data, preds)
+
     def create_model_input(self, training_data: pd.DataFrame) -> ModelInput:
         training_data['y'] = np.log1p(training_data['disease_cases']).interpolate()
         seasonal_data = SeasonalTransform(training_data, min_prev_months=self._lag,
@@ -115,6 +147,8 @@ class SeasonalRegression:
         for loc in range(L):
             ...
 
+
+
     def define_model(self, model_input: ModelInput) -> int:
         L, Y, M = model_input.y.shape
         n_outcomes = 1  # mean only
@@ -123,18 +157,19 @@ class SeasonalRegression:
 
         # sigma = pm.HalfNormal('sigma', sigma=10, shape=(L, 1, 1))
 
-        eta = pm.Deterministic('eta',
-                               alpha + (model_input.X[..., :self._lag] @ beta[:self._lag]))
+        eta = alpha + (model_input.X[..., :self._lag] @ beta[:self._lag])
+        eta = Deterministic('eta', eta)
+
 
         scale = pm.LogNormal('scale', sigma=100, shape=(L, Y, 1))
 
         # Maybe clearer to just add epsilon noise here
         epsilon = pm.Normal('epsilon', mu=0, sigma=40, shape=(L, Y, n_outcomes))
-        sampled_eta = pm.Deterministic('sampled_eta', eta + epsilon)
+        sampled_eta = Deterministic('sampled_eta', eta + epsilon)
         # sampled_eta = pm.Normal('sampled_eta', mu=eta, sigma=sigma, shape=(L, Y, n_outcomes))
 
         mu = sampled_eta[..., [0]]
-        pm.Deterministic('transformed_pattern', model_input.seasonal_pattern * scale + mu)  # For plotting
+        Deterministic('transformed_pattern', model_input.seasonal_pattern * scale + mu)  # For plotting
 
         samples = pm.Normal('samples',
                             mu=model_input.seasonal_pattern,
@@ -165,7 +200,7 @@ class SeasonalRegression:
             X = model_input.X
             alpha = pm.Normal('intercept', mu=0, sigma=10, shape=(L, 1, 1))  # SHould this be global?
             beta = pm.Normal('slope', mu=0, sigma=10, shape=(X.shape[-1], 1))
-            eta = pm.Deterministic('eta',
+            eta = Deterministic('eta',
                                    alpha + (X @ beta))
         else:
             eta = 0
@@ -178,7 +213,7 @@ class SeasonalRegression:
         scale_sigma = pm.HalfNormal('scale_sigma', sigma=1)
         scale = pm.Normal('scale', scale_mu, sigma=scale_sigma, shape=(L, Y, 1))
 
-        transformed_pattern = pm.Deterministic('transformed_pattern',
+        transformed_pattern = Deterministic('transformed_pattern',
                 model_input.seasonal_pattern * scale+loc)
 
         if self._model_params.errors == 'rw':
@@ -199,7 +234,8 @@ class SeasonalRegression:
                   observed=model_input.y[:, :-1])
         pm.Normal('last_year',
                   mu=transformed_samples[:, -1:, :model_input.last_month+1],
-                  sigma=sigma, observed=model_input.y[:, -1:, :model_input.last_month+1])
+                  sigma=sigma,
+                  observed=model_input.y[:, -1:, :model_input.last_month+1])
 
 
     def get_seasonal_pattern(self, y: np.ndarray[tuple[Any, ...], Any]) -> tuple[Any, Any]:
@@ -242,7 +278,6 @@ class SeasonalRegression:
 
         L, Y, M = training_data.y.shape  # Locations, Years, Months
         plot_year_idx = Y - 1 if year_idx is None else year_idx
-
         # Create data in long format for Altair
         data = []
 
@@ -525,16 +560,8 @@ class SeasonalRegression:
 
         plt.close()
 
-@pytest.fixture
-def thai_begin_season(data_path) -> pd.DataFrame:
-    import chap_core
-    from chap_core.assessment.dataset_splitting import train_test_generator
-    csv_file = data_path / 'thailand.csv'
-    dataset = chap_core.data.DataSet.from_csv(csv_file)
-    train_data, _ = train_test_generator(dataset, prediction_length=3, n_test_sets=12)
-    df = train_data.to_pandas()
-    df.time_period = df.time_period.astype(str)
-    return df
+
+
 
 
 def test_seasonal_regression(large_df: pd.DataFrame):
@@ -549,13 +576,30 @@ def test_seasonal_regression(large_df: pd.DataFrame):
     for plot in model.explanation_plots:
         plot.show()
 
+
+def test_advi(large_df: pd.DataFrame):
+    global TESTING
+    TESTING = True
+    model = SeasonalRegression(mcmc_params=MCMCParams().debug(),
+                               model_params=ModelParams(errors='rw'),
+                               lag=3, prediction_length=3)
+
+    preds, approx = model.predict_advi(large_df, return_approx=True, n_iterations=100, n_samples=100)
+    #model.plot_prediction(approx, large_df, 'advi_prediction_plot.png')
+    #for plot in model.explanation_plots:
+    #    plot.show()
+
 def test_begin_season(thai_begin_season):
-    first_group = next(iter(thai_begin_season.groupby('location')))[1]
-    thai_begin_season = first_group
+    #first_group = next(iter(thai_begin_season.groupby('location')))[1]
+    #hai_begin_season = first_group
     model = SeasonalRegression(mcmc_params=MCMCParams(), lag=3, prediction_length=3)
-    preds = model.predict(thai_begin_season)
-    #for i, plot in enumerate(model.explanation_plots):
-    #    plot.save(f'begin_season_explanation_{i}.html')
+    model.predict(thai_begin_season)
+
+def test_viet_begin_season(viet_begin_season):
+    global TESTING
+    TESTING = True
+    model = SeasonalRegression(mcmc_params=MCMCParams(), lag=3, prediction_length=3)
+    model.predict(viet_begin_season)
 
 @pytest.fixture()
 def model_input():
@@ -617,12 +661,15 @@ app = cyclopts.App()
 def predict(csv_file: str):
     df = pd.read_csv(csv_file)
     model = SeasonalRegression()
-    preds, idata = model.predict(df, return_idata=True)
+    if False:
+        preds, idata = model.predict(df, return_idata=True)
+    else:
+        preds = model.predict_advi(df, return_approx=False, n_iterations=10000, n_samples=1000)
     # save data from idata
-    idata.to_netcdf('seasonal_regression_trace.nc')
-    model.plot_trace(idata, 'seasonal_regression_trace.png')
+    #idata.to_netcdf('seasonal_regression_trace.nc')
+    #model.plot_trace(idata, 'seasonal_regression_trace.png')
 
-    model.plot_prediction(idata, df, 'seasonal_regression_predictions.png')
+    #model.plot_prediction(idata, df, 'seasonal_regression_predictions.png')
     preds.to_csv('seasonal_regression_output.csv', index=False)
 
 @app.command()

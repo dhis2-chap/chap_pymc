@@ -15,7 +15,7 @@ def predict(model: str,
             model_config: str | None = None):
     training_df = pd.read_csv(historic_data)
     model = SeasonalRegression()
-    predictions, idata = model.predict(training_df, return_idata=True)
+    predictions= model.predict_advi(training_df)
     # predictions = get_predictions(training_df)
     predictions.to_csv(out_file, index=False)
 

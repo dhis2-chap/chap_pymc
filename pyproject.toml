@@ -37,6 +37,8 @@ dependencies = [
     "pytest>=8.4.2",
     "chap-core>=1.0.17",
     "vl-convert-python>=1.8.0",
+    "vegafusion>=2.0.3",
+    "pyarrow>=21.0.0",
 ]
 
 [project.optional-dependencies]
