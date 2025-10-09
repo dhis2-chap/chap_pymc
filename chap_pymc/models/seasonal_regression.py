@@ -99,11 +99,11 @@ class SeasonalRegression:
         else:
             return create_output(training_data, preds)
 
-    def predict_advi(self, training_data: pd.DataFrame, n_samples=1000, n_iterations=100000, return_approx=False):
+    def predict_advi(self, training_data: pd.DataFrame, n_samples=1000, return_approx=False):
         model_input = self.create_model_input(training_data)
         with pm.Model() as model:
             self.define_stable_model(model_input)
-            approx = pm.fit(n=n_iterations, method='advi')
+            approx = pm.fit(n=self._mcmc_params.n_iterations, method='advi')
 
         # Draw samples from the approximation
         posterior_samples = approx.sample(n_samples)
@@ -584,7 +584,7 @@ def test_advi(large_df: pd.DataFrame):
                                model_params=ModelParams(errors='rw'),
                                lag=3, prediction_length=3)
 
-    preds, approx = model.predict_advi(large_df, return_approx=True, n_iterations=100, n_samples=100)
+    preds, approx = model.predict_advi(large_df, return_approx=True, n_samples=100)
     #model.plot_prediction(approx, large_df, 'advi_prediction_plot.png')
     #for plot in model.explanation_plots:
     #    plot.show()
@@ -664,7 +664,7 @@ def predict(csv_file: str):
     if False:
         preds, idata = model.predict(df, return_idata=True)
     else:
-        preds = model.predict_advi(df, return_approx=False, n_iterations=10000, n_samples=1000)
+        preds = model.predict_advi(df, return_approx=False, n_samples=1000)
     # save data from idata
     #idata.to_netcdf('seasonal_regression_trace.nc')
     #model.plot_trace(idata, 'seasonal_regression_trace.png')

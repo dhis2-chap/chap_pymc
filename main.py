@@ -1,3 +1,4 @@
+from chap_pymc.mcmc_params import MCMCParams
 from chap_pymc.models.seasonal_regression import SeasonalRegression
 import cyclopts
 import pandas as pd
@@ -14,7 +15,7 @@ def predict(model: str,
             out_file: str,
             model_config: str | None = None):
     training_df = pd.read_csv(historic_data)
-    model = SeasonalRegression()
+    model = SeasonalRegression(mcmc_params=MCMCParams(n_iterations=200_000))
     predictions= model.predict_advi(training_df)
     # predictions = get_predictions(training_df)
     predictions.to_csv(out_file, index=False)
