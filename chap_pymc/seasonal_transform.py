@@ -21,6 +21,14 @@ class SeasonalTransform:
     . The year starts at the month with the lowest average incidence
     of disease cases.
     '''
+    def coords(self):
+        return {
+            'location': self._df['location'].unique(),
+            'year': np.arange(self._df['season_idx'].nunique()-1),
+            'month': np.arange(self.first_seasonal_month, self.first_seasonal_month + 12 + self._pad_left + self._pad_right),
+        }
+
+
     def __init__(self, df: pd.DataFrame, params: TransformParameters = TransformParameters()):
         '''
         df: DataFrame with columns ['location', 'time_period', target_name]

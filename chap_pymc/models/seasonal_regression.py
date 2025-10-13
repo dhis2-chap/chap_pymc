@@ -8,6 +8,10 @@ import cyclopts
 import numpy as np
 import pandas as pd
 import pymc as pm
+import xarray
+
+from chap_pymc.models.model_with_dimensions import define_stable_model
+
 try:
     import matplotlib.pyplot as plt
     import altair as alt
@@ -100,8 +104,28 @@ class SeasonalRegression:
         else:
             return create_output(training_data, preds)
 
+    def predict_with_dims(self, training_data: pd.DataFrame, n_samples=1000):
+        model_input = self.create_model_input(training_data)
+        model_input.X = xarray.DataArray(model_input.X, dims=('location', 'year', 'feature'))
+        model_input.y = xarray.DataArray(model_input.y, dims=('location', 'year', 'month'))
+        model_input.seasonal_pattern = xarray.DataArray(model_input.seasonal_pattern[:, 0, :], dims=('location', 'month'))
+        model_input.seasonal_errors = xarray.DataArray(model_input.seasonal_errors[:, 0, :], dims=('location', 'month'))
+
+        coords = self._seasonal_data.coords() | {'feature': [f'temp_lag{self._lag-i}'for i in range(self._lag)]}
+        with pm.Model(coords=coords) as model:
+            define_stable_model(model_input, self._model_params)
+            approx = pm.fit(n=self._mcmc_params.n_iterations, method='advi')
+        last_month = model_input.last_month
+        posterior_samples = approx.sample(n_samples)
+        posterior_samples = posterior_samples.posterior['transformed_samples'].stack(samples=("chain", "draw")).values[
+            :, -1, last_month + 1:last_month + self._prediction_length + 1]
+        preds = np.expm1(posterior_samples)
+        return create_output(training_data, preds)
+
+
     def predict_advi(self, training_data: pd.DataFrame, n_samples=1000, return_approx=False):
         model_input = self.create_model_input(training_data)
+        from .model_with_dimensions import define_stable_model
         with pm.Model() as model:
             self.define_stable_model(model_input)
             approx = pm.fit(n=self._mcmc_params.n_iterations, method='advi')
@@ -127,10 +151,11 @@ class SeasonalRegression:
 
     def create_model_input(self, training_data: pd.DataFrame) -> ModelInput:
         training_data['y'] = np.log1p(training_data['disease_cases']).interpolate()
-        seasonal_data = SeasonalTransform(training_data,
-                                          TransformParameters(min_prev_months=self._lag,
-                                                              min_post_months=self._prediction_length))
-
+        seasonal_data = SeasonalTransform(
+            training_data,
+            TransformParameters(min_prev_months=self._lag,
+                                min_post_months=self._prediction_length))
+        self._seasonal_data = seasonal_data
         if TESTING:
             self._explanation_plots.append(seasonal_data.plot_feature('y'))
 
@@ -238,6 +263,7 @@ class SeasonalRegression:
                   mu=transformed_samples[:, -1:, :model_input.last_month+1],
                   sigma=sigma,
                   observed=model_input.y[:, -1:, :model_input.last_month+1])
+
 
 
     def get_seasonal_pattern(self, y: np.ndarray[tuple[Any, ...], Any]) -> tuple[Any, Any]:
@@ -589,12 +615,12 @@ def test_seasonal_regression(large_df: pd.DataFrame):
 
 def test_advi(large_df: pd.DataFrame):
     global TESTING
-    TESTING = True
+    #TESTING = True
     model = SeasonalRegression(mcmc_params=MCMCParams().debug(),
                                model_params=ModelParams(errors='rw'),
                                lag=3, prediction_length=3)
 
-    preds, approx = model.predict_advi(large_df, return_approx=True, n_samples=100)
+    preds = model.predict_with_dims(large_df, n_samples=100)
     #model.plot_prediction(approx, large_df, 'advi_prediction_plot.png')
     #for plot in model.explanation_plots:
     #    plot.show()
@@ -609,7 +635,7 @@ def test_viet_begin_season(viet_begin_season):
     global TESTING
     TESTING = True
     model = SeasonalRegression(mcmc_params=MCMCParams(), lag=3, prediction_length=3)
-    model.predict(viet_begin_season)
+    model.predict_with_dims(viet_begin_season)
 
 @pytest.fixture()
 def model_input():

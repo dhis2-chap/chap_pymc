@@ -16,7 +16,8 @@ def predict(model: str,
             model_config: str | None = None):
     training_df = pd.read_csv(historic_data)
     model = SeasonalRegression(mcmc_params=MCMCParams(n_iterations=200_000))
-    predictions= model.predict_advi(training_df)
+    predictions = model.predict_with_dims(training_df)
+    #predictions= model.predict_advi(training_df)
     # predictions = get_predictions(training_df)
     predictions.to_csv(out_file, index=False)
 
