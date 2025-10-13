@@ -1,8 +1,18 @@
+from typing import Literal
+
 import numpy as np
 import pandas as pd
 import logging
 
+import pydantic
+
 logger = logging.getLogger(__name__)
+
+
+class TransformParameters(pydantic.BaseModel):
+    min_prev_months: int | None = None
+    min_post_months: int | None = None
+    alignment: Literal['min', 'max', 'med'] = 'min'
 
 
 class SeasonalTransform:
@@ -11,7 +21,7 @@ class SeasonalTransform:
     . The year starts at the month with the lowest average incidence
     of disease cases.
     '''
-    def __init__(self, df: pd.DataFrame, target_name='disease_cases', min_prev_months=None, min_post_months=None):
+    def __init__(self, df: pd.DataFrame, params: TransformParameters = TransformParameters()):
         '''
         df: DataFrame with columns ['location', 'time_period', target_name]
         target_name: Name of the target variable column in df
@@ -19,6 +29,8 @@ class SeasonalTransform:
         pad_right: Number of months to pad on the right (after the last month)
         0 padding means no padding.
         '''
+        min_prev_months = params.min_prev_months
+        min_post_months = params.min_post_months
         self._df = df.copy()
         self._df['month'] = self._df['time_period'].apply(lambda x: int(x.split('-')[1]))
         self._df['year'] = self._df['time_period'].apply(lambda x: int(x.split('-')[0]))
@@ -38,8 +50,15 @@ class SeasonalTransform:
         self._remove_first_year = self.first_seasonal_month > 0
 
     def _find_min_month(self):
-        means = ((month, group['y'].mean()) for month, group in self._df.groupby('month'))
+        means = [(month, group['y'].mean()) for month, group in self._df.groupby('month')]
         min_month, val  = min(means, key=lambda x: x[1])
+        max_month, val = max(means, key=lambda x: x[1])
+        print(f"min_month: {min_month}, max_month: {max_month}")
+        med = (min_month+max_month-6)/2
+        med = int(med-1) % 12 + 1
+
+        if True:
+            return med
         return min_month
 
     def get_df(self, feature_name, start_year=None):
@@ -60,7 +79,7 @@ class SeasonalTransform:
 
     def plot_feature(self, feature_name):
         import altair as alt
-        df = self.get_df(feature_name, start_year=3)
+        df = self.get_df(feature_name, start_year=1)
         chart = alt.Chart(df).mark_line().encode(
             x='seasonal_month',
             y=feature_name,
@@ -111,12 +130,12 @@ def test_seasonal_transform(df: pd.DataFrame):
 
 def test_right_pad(df: pd.DataFrame):
     df['y'] = np.log1p(df['disease_cases'])
-    st = SeasonalTransform(df, min_post_months=7)
+    st = SeasonalTransform(df, TransformParameters(min_post_months=7))
     pivoted = st['y']
     assert pivoted.shape == (7, 13, 13), pivoted
 
 def test_left_pad(df: pd.DataFrame):
     df['y'] = np.log1p(df['disease_cases'])
-    st = SeasonalTransform(df, min_prev_months=7)
+    st = SeasonalTransform(df, TransformParameters(min_prev_months=7))
     pivoted = st['y']
     assert pivoted.shape == (7, 13, 13), pivoted

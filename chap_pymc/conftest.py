@@ -32,6 +32,14 @@ def thai_begin_season(data_path) -> pd.DataFrame:
     return df
 
 @pytest.fixture
+def nepal_data() -> pd.DataFrame:
+    country = 'nepal_evaluation_set'
+    offset = 6
+    local_data_path = Path('/Users/knutdr/Sources/chap_benchmarking/csv_datasets')
+    df = get_test_instance(country, local_data_path, offset)
+    return df
+
+@pytest.fixture
 def viet_begin_season(data_path) -> pd.DataFrame:
     country = 'vietnam'
     offset = 10

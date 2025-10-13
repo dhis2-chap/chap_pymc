@@ -17,7 +17,8 @@ except ImportError:
 import pytest
 
 from chap_pymc.mcmc_params import MCMCParams
-from chap_pymc.seasonal_transform import SeasonalTransform
+from chap_pymc.seasonal_transform import SeasonalTransform, TransformParameters
+
 TESTING=False
 logging.basicConfig(level=logging.INFO)
 @dataclasses.dataclass
@@ -87,7 +88,7 @@ class SeasonalRegression:
         with pm.Model() as _:
             self.define_stable_model(model_input)
             idata = pm.sample(**self._mcmc_params.model_dump())
-        if TESTING:
+        if TESTING and False:
             self.plot_effect_trace(idata)
             self.pyplot_last_year(model_input, idata)
         last_month = model_input.last_month
@@ -126,8 +127,10 @@ class SeasonalRegression:
 
     def create_model_input(self, training_data: pd.DataFrame) -> ModelInput:
         training_data['y'] = np.log1p(training_data['disease_cases']).interpolate()
-        seasonal_data = SeasonalTransform(training_data, min_prev_months=self._lag,
-                                          min_post_months=self._prediction_length)
+        seasonal_data = SeasonalTransform(training_data,
+                                          TransformParameters(min_prev_months=self._lag,
+                                                              min_post_months=self._prediction_length))
+
         if TESTING:
             self._explanation_plots.append(seasonal_data.plot_feature('y'))
 
@@ -146,8 +149,6 @@ class SeasonalRegression:
         L, Y, M = model_input.y.shape
         for loc in range(L):
             ...
-
-
 
     def define_model(self, model_input: ModelInput) -> int:
         L, Y, M = model_input.y.shape
@@ -206,9 +207,9 @@ class SeasonalRegression:
             eta = 0
 
 
-        loc_mu = pm.Normal('loc_mu',mu=0, sigma=10, shape=(L, 1, 1))
+        loc_mu = pm.Normal('loc_mu', mu=0, sigma=10, shape=(L, 1, 1))
         loc_sigma = pm.HalfNormal('loc_sigma',sigma=10)
-        loc = pm.Normal('loc', mu=loc_mu, sigma=loc_sigma, shape=(L, Y, 1))+eta
+        loc = pm.Normal('loc', mu=loc_mu, sigma=loc_sigma, shape=(L, Y, 1)) + eta
         scale_mu = pm.Normal('scale_mu', mu=1, sigma=1, shape=(L, 1, 1))
         scale_sigma = pm.HalfNormal('scale_sigma', sigma=1)
         scale = pm.Normal('scale', scale_mu, sigma=scale_sigma, shape=(L, Y, 1))
@@ -232,6 +233,7 @@ class SeasonalRegression:
         pm.Normal('y_obs', mu=transformed_samples[:, :-1],
                   sigma=sigma,
                   observed=model_input.y[:, :-1])
+
         pm.Normal('last_year',
                   mu=transformed_samples[:, -1:, :model_input.last_month+1],
                   sigma=sigma,
@@ -244,14 +246,14 @@ class SeasonalRegression:
         #outbreak_params = LocScalePatternFinder(y).find_params()
         #assert outbreak_params.loc.shape == loc_y.shape, (outbreak_params.loc.shape, loc_y.shape)
         #loc_y, scale_y = (outbreak_params.loc[..., None], outbreak_params.scale[..., None])
-
-
+        mask = loc_y/loc_y.max(axis=1, keepdims=True)<0.2
+        loc_y[mask] = np.nan
         base = (y - loc_y) / np.maximum(scale_y, 0.001)  # L, Y, M
 
         # TODO: standardize / std
         std_per_mont_per_loc = np.nanstd(base, axis=1, keepdims=True)  # L, 1, M
         seasonal_pattern = np.nanmean(base, axis=1, keepdims=True)
-        if TESTING and False:
+        if TESTING:
             for L in range(y.shape[0]):
                 corr = np.corrcoef(scale_y[L, :, 0], loc_y[L, :, 0])
                 plt.scatter(loc_y[L,:,0], scale_y[L, :, 0])
@@ -560,9 +562,17 @@ class SeasonalRegression:
 
         plt.close()
 
+def test_nepal(nepal_data: pd.DataFrame):
+    global TESTING
+    TESTING = True
+    model = SeasonalRegression(mcmc_params=MCMCParams(chains=2, tune=200, draws=200).debug(),
+                               model_params=ModelParams(errors='rw'),
+                               lag=3, prediction_length=3)
 
-
-
+    preds, idata = model.predict(nepal_data, return_idata=True)
+    #model.plot_prediction(idata, nepal_data, 'nepal_prediction_plot.png')
+    for plot in model.explanation_plots:
+        plot.show()
 
 def test_seasonal_regression(large_df: pd.DataFrame):
     global TESTING
