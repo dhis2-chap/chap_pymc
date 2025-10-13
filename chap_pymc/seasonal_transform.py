@@ -31,6 +31,7 @@ class SeasonalTransform:
         '''
         min_prev_months = params.min_prev_months
         min_post_months = params.min_post_months
+        self._params = params
         self._df = df.copy()
         self._df['month'] = self._df['time_period'].apply(lambda x: int(x.split('-')[1]))
         self._df['year'] = self._df['time_period'].apply(lambda x: int(x.split('-')[0]))
@@ -54,12 +55,15 @@ class SeasonalTransform:
         min_month, val  = min(means, key=lambda x: x[1])
         max_month, val = max(means, key=lambda x: x[1])
         print(f"min_month: {min_month}, max_month: {max_month}")
+
+
         med = (min_month+max_month-6)/2
         med = int(med-1) % 12 + 1
-
-        if True:
+        if self._params.alignment == 'min':
+            return min_month
+        else:
             return med
-        return min_month
+
 
     def get_df(self, feature_name, start_year=None):
         array = self[feature_name]
