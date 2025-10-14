@@ -11,7 +11,7 @@ import arviz as az
 import pymc as pm
 import xarray
 
-from chap_pymc.models.model_with_dimensions import define_stable_model, DimensionalModel
+from chap_pymc.models.model_with_dimensions import DimensionalModel, ModelParams as ModelDefParams
 
 try:
     import matplotlib.pyplot as plt
@@ -73,8 +73,8 @@ class TrainingArrays:
     seasonal_pattern: np.ndarray
     #locs: np.ndarray
 
-class ModelParams(pydantic.BaseModel):
-    errors: Literal['iid', 'rw'] = 'rw'
+class ModelParams(ModelDefParams):
+    #errors: Literal['iid', 'rw'] = 'rw'
     mask_empty_seasons: bool = False
 
 class SeasonalRegression:
@@ -601,7 +601,7 @@ def test_nepal(nepal_data: pd.DataFrame):
     global TESTING
     TESTING = True
     model = SeasonalRegression(mcmc_params=MCMCParams(chains=2, tune=200, draws=200),
-                               model_params=ModelParams(errors='rw'),
+                               model_params=ModelParams(errors='rw', use_mixture=True),
                                lag=3, prediction_length=3)
 
     preds = model.predict_with_dims(nepal_data)
