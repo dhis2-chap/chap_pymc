@@ -21,35 +21,56 @@ class ModelInput:
 class ModelParams(pydantic.BaseModel):
     errors: Literal['iid', 'rw'] = 'rw'
 
-def define_stable_model(model_input: ModelInput, params=ModelParams()):
-    L, Y, M = model_input.y.shape
-    if model_input.X.size:
-        X = model_input.X
-        alpha = pmd.Normal('intercept', mu=0, sigma=10, dims='location')  # Should this be global?
-        beta = pm.Normal('slope', mu=0, sigma=10, dims='feature')
-        tmp = (X.values @ beta[..., None]).squeeze(-1)  # Shape (L, Y)
-        tmp = pmd.as_xtensor(tmp, dims=('location', 'year'))
-        eta = pmd.Deterministic('eta', alpha + tmp, dims=('location', 'year'))
-    else:
-        eta = 0
+class DimensionalModel:
+    def __init__(self, model_params: ModelParams=ModelParams()):
+        self._model_params = model_params
 
-    loc_mu = pmd.Normal('loc_mu', mu=0, sigma=10, dims='location')
-    loc_sigma = pmd.HalfNormal('loc_sigma', sigma=10)
-    loc = pmd.Normal('loc', mu=loc_mu, sigma=loc_sigma, dims=('location', 'year')) + eta
-    scale_mu = pmd.Normal('scale_mu', mu=1, sigma=1, dims='location')
-    scale_sigma = pmd.HalfNormal('scale_sigma', sigma=1)
-    scale = pmd.Normal('scale', scale_mu, sigma=scale_sigma, dims=('location', 'year'))
+    def build_model(self, model_input: ModelInput):
+        params = self._model_params
+        L, Y, M = model_input.y.shape
+        if model_input.X.size:
+            eta = self._linear_effect(model_input)
+        else:
+            eta = 0
 
-    #transformed_pattern = pm.Deterministic(
-    #'transformed_pattern',
-    #model_input.seasonal_pattern.values[:, None, :] * scale[..., None] + loc[..., None],
-    seasonal = pmd.as_xtensor(model_input.seasonal_pattern, dims=('location', 'month'))
-    transformed_pattern=pmd.Deterministic(
+        loc_mu = pmd.Normal('loc_mu', mu=0, sigma=10, dims='location')
+        loc_sigma = pmd.HalfNormal('loc_sigma', sigma=10)
+        loc = pmd.Normal('loc', mu=loc_mu, sigma=loc_sigma, dims=('location', 'year')) + eta
+        scale_mu = pmd.Normal('scale_mu', mu=1, sigma=1, dims='location')
+        scale_sigma = pmd.HalfNormal('scale_sigma', sigma=1)
+        scale = pmd.Normal('scale', scale_mu, sigma=scale_sigma, dims=('location', 'year'))
+        seasonal = pmd.as_xtensor(model_input.seasonal_pattern, dims=('location', 'month'))
+        transformed_pattern = pmd.Deterministic(
             'transformed_pattern',
-        seasonal * scale + loc)
+            seasonal * scale + loc)
 
+        # Mixture of normal season and empty season
 
-    if params.errors == 'rw':
+        if params.errors == 'rw':
+            epsilon = self._ar_effect(model_input)
+        else:
+            epsilon = 0
+
+        transformed_samples = pmd.Deterministic('transformed_samples', transformed_pattern + epsilon,
+                                                dims=('location', 'year', 'month'))
+        sigma = pmd.HalfNormal('sigma', sigma=1, dims='location')
+        seen_year_samples = transformed_samples.isel(year=slice(None, -1))
+        seen_year_observed = model_input.y.isel(year=slice(None, -1)).values
+        pm.Normal('y_obs',
+                  mu=seen_year_samples.values,
+                  sigma=sigma.values[:, None, None],
+                  observed=seen_year_observed)
+
+        last_year_observed = model_input.y.isel(year=slice(-1, None),
+                                                month=slice(None, model_input.last_month + 1)).values
+        last_year_mu = transformed_samples.isel(year=slice(-1, None), month=slice(None, model_input.last_month + 1))
+        pm.Normal('last_year',
+                  mu=last_year_mu.values,
+                  sigma=sigma.values[:, None, None],
+                  observed=last_year_observed)
+
+    def _ar_effect(self, model_input: ModelInput) -> Variable | XTensorConstant[XTensorType | Any] | Any:
+        L, Y, M = model_input.y.shape
         ar_sigma = pm.HalfNormal('ar_sigma', sigma=0.2, dims='location')
 
         init_dist = pm.Normal.dist(np.zeros((L, Y)), ar_sigma[..., None])  # Broadcast here
@@ -61,25 +82,16 @@ def define_stable_model(model_input: ModelInput, params=ModelParams()):
                                         steps=M - 1,
                                         dims=('location', 'year', 'month'))
         epsilon = as_xtensor(epsilon, dims=('location', 'year', 'month'))
-    else:
-        epsilon = 0
+        return epsilon
 
-    transformed_samples = pmd.Deterministic('transformed_samples', transformed_pattern + epsilon, dims=('location', 'year', 'month'))
-    sigma = pmd.HalfNormal('sigma', sigma=1, dims='location')
-    seen_year_samples = transformed_samples.isel(year=slice(None, -1))
-    seen_year_observed = model_input.y.isel(year=slice(None, -1)).values
-    pm.Normal('y_obs',
-               mu=seen_year_samples.values,
-               sigma=sigma.values[:, None, None],
-               observed=seen_year_observed)
-
-    last_year_observed = model_input.y.isel(year=slice(-1, None), month=slice(None, model_input.last_month + 1)).values
-    #[:, -1:, :model_input.laast_month + 1]
-    last_year_mu = transformed_samples.isel(year=slice(-1, None), month=slice(None, model_input.last_month + 1))
-    pm.Normal('last_year',
-               mu=last_year_mu.values,
-               sigma=sigma.values[:, None, None],
-               observed=last_year_observed)
+    def _linear_effect(self, model_input: ModelInput) -> XTensorVariable:
+        X = model_input.X
+        alpha = pmd.Normal('intercept', mu=0, sigma=10, dims='location')  # Should this be global?
+        beta = pm.Normal('slope', mu=0, sigma=10, dims='feature')
+        tmp = (X.values @ beta[..., None]).squeeze(-1)  # Shape (L, Y)
+        tmp = pmd.as_xtensor(tmp, dims=('location', 'year'))
+        eta = pmd.Deterministic('eta', alpha + tmp, dims=('location', 'year'))
+        return eta
 
 
 @pytest.fixture()
@@ -107,6 +119,7 @@ def test_model_with_dimensions(model_input):
         'year': [f'202{i}' for i in range(model_input.y.shape[1])],
         'month': list(range(1, 13))
         }) as model:
-        define_stable_model(model_input)
+        DimensionalModel().build_model(model_input)
+        #define_stable_model(model_input)
         idata = pm.sample(10, tune=5, chains=1, return_inferencedata=True)
     assert idata is not None

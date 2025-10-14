@@ -7,14 +7,16 @@ from typing import Any, Literal
 import cyclopts
 import numpy as np
 import pandas as pd
+import arviz as az
 import pymc as pm
 import xarray
 
-from chap_pymc.models.model_with_dimensions import define_stable_model
+from chap_pymc.models.model_with_dimensions import define_stable_model, DimensionalModel
 
 try:
     import matplotlib.pyplot as plt
     import altair as alt
+    # alt.data_transformers.enable("vegafusion")
 except ImportError:
     plt = None
     alt = None
@@ -73,6 +75,7 @@ class TrainingArrays:
 
 class ModelParams(pydantic.BaseModel):
     errors: Literal['iid', 'rw'] = 'rw'
+    mask_empty_seasons: bool = False
 
 class SeasonalRegression:
     features = ['mean_temperature']
@@ -113,10 +116,15 @@ class SeasonalRegression:
 
         coords = self._seasonal_data.coords() | {'feature': [f'temp_lag{self._lag-i}'for i in range(self._lag)]}
         with pm.Model(coords=coords) as model:
-            define_stable_model(model_input, self._model_params)
+            DimensionalModel(self._model_params).build_model(model_input)
+            # define_stable_model(model_input, self._model_params)
+            #graph = pm.model_to_graphviz(model)
+            #graph.render('model_graph', format='png', view=True)
             approx = pm.fit(n=self._mcmc_params.n_iterations, method='advi')
         last_month = model_input.last_month
         posterior_samples = approx.sample(n_samples)
+        #az.plot_posterior(posterior_samples, var_names=['slope', 'intercept', 'scale_mu', 'scale_sigma'])
+        #plt.show()
         posterior_samples = posterior_samples.posterior['transformed_samples'].stack(samples=("chain", "draw")).values[
             :, -1, last_month + 1:last_month + self._prediction_length + 1]
         preds = np.expm1(posterior_samples)
@@ -272,8 +280,9 @@ class SeasonalRegression:
         #outbreak_params = LocScalePatternFinder(y).find_params()
         #assert outbreak_params.loc.shape == loc_y.shape, (outbreak_params.loc.shape, loc_y.shape)
         #loc_y, scale_y = (outbreak_params.loc[..., None], outbreak_params.scale[..., None])
-        mask = loc_y/loc_y.max(axis=1, keepdims=True)<0.2
-        loc_y[mask] = np.nan
+        if self._model_params.mask_empty_seasons:
+            mask = loc_y/loc_y.max(axis=1, keepdims=True)<0.2
+            loc_y[mask] = np.nan
         base = (y - loc_y) / np.maximum(scale_y, 0.001)  # L, Y, M
 
         # TODO: standardize / std
@@ -591,18 +600,17 @@ class SeasonalRegression:
 def test_nepal(nepal_data: pd.DataFrame):
     global TESTING
     TESTING = True
-    model = SeasonalRegression(mcmc_params=MCMCParams(chains=2, tune=200, draws=200).debug(),
+    model = SeasonalRegression(mcmc_params=MCMCParams(chains=2, tune=200, draws=200),
                                model_params=ModelParams(errors='rw'),
                                lag=3, prediction_length=3)
 
-    preds, idata = model.predict(nepal_data, return_idata=True)
-    #model.plot_prediction(idata, nepal_data, 'nepal_prediction_plot.png')
-    for plot in model.explanation_plots:
-        plot.show()
+    preds = model.predict_with_dims(nepal_data)
+    #for plot in model.explanation_plots:
+    #    plot.show()
 
 def test_seasonal_regression(large_df: pd.DataFrame):
     global TESTING
-    TESTING = True
+    # TESTING = True
     model = SeasonalRegression(mcmc_params=MCMCParams(chains=4, tune=400, draws=400).debug(),
                                model_params=ModelParams(errors='rw'),
                                lag=3, prediction_length=3)

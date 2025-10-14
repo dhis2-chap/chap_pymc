@@ -39,6 +39,8 @@ dependencies = [
     "vl-convert-python>=1.8.0",
     "vegafusion>=2.0.3",
     "pyarrow>=21.0.0",
+    "ipython>=9.6.0",
+    "graphviz>=0.21",
 ]
 
 [project.optional-dependencies]
