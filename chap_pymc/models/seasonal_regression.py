@@ -164,8 +164,8 @@ class SeasonalRegression:
             TransformParameters(min_prev_months=self._lag,
                                 min_post_months=self._prediction_length))
         self._seasonal_data = seasonal_data
-        if TESTING:
-            self._explanation_plots.append(seasonal_data.plot_feature('y'))
+        #if TESTING:
+        #    self._explanation_plots.append(seasonal_data.plot_feature('y'))
 
         X = self.create_X(seasonal_data)
         y = seasonal_data['y']
