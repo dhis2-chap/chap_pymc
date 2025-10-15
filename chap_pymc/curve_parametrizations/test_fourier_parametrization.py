@@ -2,7 +2,7 @@ import pymc as pm
 import numpy as np
 import pytest
 import xarray
-
+from chap_pymc.curve_parametrizations.fourier_parametrization_plots import plot_vietnam_faceted_predictions
 from chap_pymc.curve_parametrizations.fourier_parametrization import FourierParametrization, FourierHyperparameters
 from chap_pymc.model_input_creator import ModelInputCreator
 
@@ -86,10 +86,30 @@ def test_fourier_parametrization(y, coords):
     # Create plot using plotting function
     plot_faceted_predictions(y, mu_mean, mu_lower, mu_upper, coords)
 
+@pytest.fixture
+def viet_coords(viet_model_input):
+    return {
+        'location': viet_model_input.y.coords['location'].values,
+        'year': viet_model_input.y.coords['year'].values,
+        'month': viet_model_input.y.coords['month'].values,
+        'harmonic': np.arange(4),
+        'feature': viet_model_input.X.coords['feature'].values
+    }
+
+
+def test_vietnam_regression(viet_model_input, viet_coords):
+    n_harmonics = len(viet_coords['harmonic'])
+    with pm.Model(coords=viet_coords) as model:
+        m = FourierParametrization(FourierHyperparameters(n_harmonics=n_harmonics))
+        m.get_regression_model(viet_model_input.X, viet_model_input.y)
+        pm.model_to_graphviz(model).render('fourier_graph', format='png', view=True)
+        idata = pm.sample(draws=500, tune=500, progressbar=True, return_inferencedata=True)
+
+
 
 def test_vietnam_fourier_fit(vietnam_y_xarray):
     """Fit Fourier parametrization to Vietnam dataset and plot results"""
-    from chap_pymc.curve_parametrizations.fourier_parametrization_plots import plot_vietnam_faceted_predictions
+
     n_harmonics = 3
     # Extract coordinates from the data
     coords = {
