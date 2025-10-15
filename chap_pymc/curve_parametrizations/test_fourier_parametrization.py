@@ -72,7 +72,7 @@ def test_vietnam_y_xarray_fixture(vietnam_y_xarray):
 def test_fourier_parametrization(y, coords):
     """Test Fourier parametrization with synthetic data and create faceted plot"""
     from chap_pymc.curve_parametrizations.fourier_parametrization_plots import plot_faceted_predictions
-
+    coords |= {'harmonic': np.arange(1, 3)}  # Add harmonic coordinate for plotting
     with pm.Model(coords=coords) as model:
         FourierParametrization().get_model(y)
         idata = pm.sample(draws=100, tune=100, progressbar=True, return_inferencedata=True)
@@ -90,17 +90,17 @@ def test_fourier_parametrization(y, coords):
 def test_vietnam_fourier_fit(vietnam_y_xarray):
     """Fit Fourier parametrization to Vietnam dataset and plot results"""
     from chap_pymc.curve_parametrizations.fourier_parametrization_plots import plot_vietnam_faceted_predictions
-
+    n_harmonics = 3
     # Extract coordinates from the data
     coords = {
         'location': vietnam_y_xarray.coords['location'].values,
         'year': vietnam_y_xarray.coords['year'].values,
-        'month': vietnam_y_xarray.coords['month'].values
+        'month': vietnam_y_xarray.coords['month'].values,
+        'harmonic': np.arange(1, n_harmonics+1)  # Add harmonic coordinate for plotting
     }
-
     # Build and sample the model
     with pm.Model(coords=coords) as model:
-        FourierParametrization(FourierHyperparameters(n_harmonics=3)).get_model(vietnam_y_xarray)
+        FourierParametrization(FourierHyperparameters(n_harmonics=n_harmonics)).get_model(vietnam_y_xarray)
         pm.model_to_graphviz(model).render('fourier_graph', format='png', view=True)
         idata = pm.sample(draws=500, tune=500, progressbar=True, return_inferencedata=True)
 
@@ -122,13 +122,15 @@ def test_vietnam_parameter_correlations(viet_model_input):
 
     # Extract coordinates and data
     vietnam_y = viet_model_input.y
+    n_harmonics = 3
     coords = {
         'location': vietnam_y.coords['location'].values,
         'year': vietnam_y.coords['year'].values,
-        'month': vietnam_y.coords['month'].values
+        'month': vietnam_y.coords['month'].values,
+        'harmonic': np.arange(1, n_harmonics+1)  # Add harmonic coordinate for plotting
     }
 
-    n_harmonics = 3
+
 
     # Build and sample the model
     with pm.Model(coords=coords) as model:

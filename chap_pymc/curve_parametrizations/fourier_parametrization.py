@@ -19,39 +19,40 @@ class FourierParametrization:
         self.hyper_params = hyper_params
 
     def get_model(self, y: xarray.DataArray):
-        months = np.arange(0, self.hyper_params.periods)
-        # Convert months to xtensor for proper broadcasting
-        months_xt = pmd.as_xtensor(months, dims=('month',))
-
-        n_harmonics = self.hyper_params.n_harmonics
+        months_xt = pmd.as_xtensor(np.arange(len(y.coords['month'])), dims=('month',))
+        harmonics_xt = pmd.as_xtensor(np.arange(1, self.hyper_params.n_harmonics + 1), dims=('harmonic',))
         # Use nanmean and nanstd to handle missing data
         global_mean = np.nanmean(y.values)
         global_std = np.nanstd(y.values)
         location_baseline = pmd.Normal(
             'baseline_mu', mu=global_mean, sigma=global_std, dims=('location',))
 
-        baseline = pmd.Normal('baseline',
+        baseline = pmd.Normal('baseline', 
                               mu=location_baseline,
                               sigma=global_std,
                               dims=('location', 'year'))
-        # For each harmonic
-        harmonics_sum = 0
 
-        for h in range(1, n_harmonics + 1):
-            # Amplitude (constrained to be positive)
-            a_mu = pmd.Normal(f'a_mu{h}', mu=0, sigma=global_std, dims=('location',))
-            a_sigma = pmd.HalfNormal(f'a_sigma{h}', sigma=global_std)
-            A = pmd.Normal(f'A{h}',mu=a_mu, sigma=a_sigma, dims=('location', 'year'))
+        # Amplitude parameters with harmonic dimension
+        a_mu = pmd.Normal('a_mu', mu=0, sigma=global_std, dims=('location', 'harmonic'))
+        a_sigma = pmd.HalfNormal('a_sigma', sigma=global_std, dims=('harmonic',))
 
-            # Phase shift (in radians, 0 to 2π)
-            phi = pmd.Normal(f'phi{h}', 0, sigma=np.pi, dims=('location',))
-            # Add harmonic component
-            # h=1: annual cycle (period = 12 months)
-            # h=2: semi-annual cycle (period = 6 months)
-            freq = 2 * np.pi * h / 12
-            months_phi = freq * months_xt + phi
+        A = pmd.Normal('A', mu=a_mu, sigma=a_sigma, dims=('location', 'year', 'harmonic'))
+        phi = pmd.Normal('phi', 0, sigma=np.pi, dims=('location', 'harmonic'))
 
-            harmonics_sum += A * px.math.cos(months_phi)
+        # Vectorized frequency calculation
+        # h=1: annual cycle (period = 12 months)
+        # h=2: semi-annual cycle (period = 6 months)
+        freq = 2 * np.pi * harmonics_xt / 12  # Shape: (harmonic,)
+
+        # Broadcasting: months_xt (month,) + phi (location, harmonic)
+        # Result needs to be (location, month, harmonic) to work with freq
+        # freq (harmonic,) * months_xt (month,) -> (month, harmonic)
+        months_phi = freq * months_xt + phi  # (location, harmonic, month) due to broadcasting
+
+        # A is (location, year, harmonic), cos(months_phi) is (location, harmonic, month)
+        # Need to sum over harmonic dimension
+        harmonics_term = A * px.math.cos(months_phi)  # (location, year, harmonic, month)
+        harmonics_sum = harmonics_term.sum(dim='harmonic')  # Sum over harmonic dimension -> (location, year, month)
 
         mu = pmd.Deterministic('mu', baseline + harmonics_sum, dims=('location', 'year', 'month'))
         sigma = pm.HalfNormal('sigma', sigma=global_std)
