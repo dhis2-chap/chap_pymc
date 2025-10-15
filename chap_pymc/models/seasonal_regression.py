@@ -24,16 +24,10 @@ import pytest
 
 from chap_pymc.mcmc_params import MCMCParams
 from chap_pymc.seasonal_transform import SeasonalTransform, TransformParameters
+from chap_pymc.model_input_creator import ModelInputCreator, ModelInput
 
 TESTING=False
 logging.basicConfig(level=logging.INFO)
-@dataclasses.dataclass
-class ModelInput:
-    X: np.ndarray
-    y: np.ndarray
-    seasonal_pattern: np.ndarray
-    seasonal_errors: np.ndarray
-    last_month: int
 
 
 def Deterministic(name, value):
@@ -78,7 +72,6 @@ class ModelParams(ModelDefParams):
     mask_empty_seasons: bool = False
 
 class SeasonalRegression:
-    features = ['mean_temperature']
     def __init__(self, prediction_length=3, lag=3, mcmc_params=MCMCParams(), model_params=ModelParams()):
         self._prediction_length = prediction_length
         self._lag = lag
@@ -108,13 +101,16 @@ class SeasonalRegression:
             return create_output(training_data, preds)
 
     def predict_with_dims(self, training_data: pd.DataFrame, n_samples=1000):
-        model_input = self.create_model_input(training_data)
-        model_input.X = xarray.DataArray(model_input.X, dims=('location', 'year', 'feature'))
-        model_input.y = xarray.DataArray(model_input.y, dims=('location', 'year', 'month'))
-        model_input.seasonal_pattern = xarray.DataArray(model_input.seasonal_pattern[:, 0, :], dims=('location', 'month'))
-        model_input.seasonal_errors = xarray.DataArray(model_input.seasonal_errors[:, 0, :], dims=('location', 'month'))
+        creator = ModelInputCreator(
+            prediction_length=self._prediction_length,
+            lag=self._lag,
+            mask_empty_seasons=self._model_params.mask_empty_seasons
+        )
+        model_input = creator.create_model_input(training_data)
+        model_input = creator.to_xarray(model_input)
+        self._seasonal_data = creator.seasonal_data
 
-        coords = self._seasonal_data.coords() | {'feature': [f'temp_lag{self._lag-i}'for i in range(self._lag)]}
+        coords = creator.seasonal_data.coords() | {'feature': [f'temp_lag{self._lag-i}'for i in range(self._lag)]}
         with pm.Model(coords=coords) as model:
             DimensionalModel(self._model_params).build_model(model_input)
             # define_stable_model(model_input, self._model_params)
@@ -133,7 +129,7 @@ class SeasonalRegression:
 
     def predict_advi(self, training_data: pd.DataFrame, n_samples=1000, return_approx=False):
         model_input = self.create_model_input(training_data)
-        from .model_with_dimensions import define_stable_model
+
         with pm.Model() as model:
             self.define_stable_model(model_input)
             approx = pm.fit(n=self._mcmc_params.n_iterations, method='advi')
@@ -158,24 +154,13 @@ class SeasonalRegression:
             return create_output(training_data, preds)
 
     def create_model_input(self, training_data: pd.DataFrame) -> ModelInput:
-        training_data['y'] = np.log1p(training_data['disease_cases']).interpolate()
-        seasonal_data = SeasonalTransform(
-            training_data,
-            TransformParameters(min_prev_months=self._lag,
-                                min_post_months=self._prediction_length))
-        self._seasonal_data = seasonal_data
-        #if TESTING:
-        #    self._explanation_plots.append(seasonal_data.plot_feature('y'))
-
-        X = self.create_X(seasonal_data)
-        y = seasonal_data['y']
-        seasonal_pattern, std_per_mont_per_loc = self.get_seasonal_pattern(y)
-        last_month = seasonal_data.last_seasonal_month
-
-        model_input = ModelInput(X=X, y=y,
-                                 seasonal_pattern=seasonal_pattern,
-                                 seasonal_errors=std_per_mont_per_loc,
-                                 last_month=last_month)
+        creator = ModelInputCreator(
+            prediction_length=self._prediction_length,
+            lag=self._lag,
+            mask_empty_seasons=self._model_params.mask_empty_seasons
+        )
+        model_input = creator.create_model_input(training_data)
+        self._seasonal_data = creator.seasonal_data
         return model_input
 
     def plot_model_input(self, model_input: ModelInput):
@@ -273,38 +258,6 @@ class SeasonalRegression:
                   observed=model_input.y[:, -1:, :model_input.last_month+1])
 
 
-
-    def get_seasonal_pattern(self, y: np.ndarray[tuple[Any, ...], Any]) -> tuple[Any, Any]:
-        loc_y = np.nanmean(y, axis=-1, keepdims=True)  # L, Y, 1
-        scale_y = np.nanstd(y, axis=-1, keepdims=True)
-        #outbreak_params = LocScalePatternFinder(y).find_params()
-        #assert outbreak_params.loc.shape == loc_y.shape, (outbreak_params.loc.shape, loc_y.shape)
-        #loc_y, scale_y = (outbreak_params.loc[..., None], outbreak_params.scale[..., None])
-        if self._model_params.mask_empty_seasons:
-            mask = loc_y/loc_y.max(axis=1, keepdims=True)<0.2
-            loc_y[mask] = np.nan
-        base = (y - loc_y) / np.maximum(scale_y, 0.001)  # L, Y, M
-
-        # TODO: standardize / std
-        std_per_mont_per_loc = np.nanstd(base, axis=1, keepdims=True)  # L, 1, M
-        seasonal_pattern = np.nanmean(base, axis=1, keepdims=True)
-        if TESTING:
-            for L in range(y.shape[0]):
-                corr = np.corrcoef(scale_y[L, :, 0], loc_y[L, :, 0])
-                plt.scatter(loc_y[L,:,0], scale_y[L, :, 0])
-                plt.title(str((corr[0,1], np.nanmean(loc_y[L]),np.nanmean(scale_y[L]))))
-                plt.show()
-                plt.plot(seasonal_pattern[L,0,:])
-                plt.show()
-        return seasonal_pattern, std_per_mont_per_loc
-
-    def create_X(self, seasonal_data: SeasonalTransform) -> np.ndarray[tuple[Any, ...], np.dtype[np.float64]]:
-        '''TODO: Actually use multiple features'''
-        last_month = seasonal_data.last_seasonal_month
-        X = {feature: seasonal_data[feature] for feature in self.features}
-        temp = X['mean_temperature'][:, :, last_month - self._lag + 1:last_month + 1]
-        temp = (temp - np.nanmean(temp)) / np.nanstd(temp)  # Standardize predictor
-        return temp
 
     def _get_longform_trace(self, idata, param_names: list[str]):
         ...

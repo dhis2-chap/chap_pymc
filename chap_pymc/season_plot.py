@@ -3,6 +3,7 @@ import pandas as pd
 import altair as alt
 import pytest
 from chap_pymc.dataset_plots import DatasetPlot
+from chap_pymc.correlation_plots import CorrelationBarPlot
 from pathlib import Path
 
 alt.renderers.default = 'browser'
@@ -61,11 +62,18 @@ class SeasonCorrelationPlot(DatasetPlot):
         ).resolve_scale(y='independent', x='independent'))
 
 
-class SeasonCorrelationBarPlot(SeasonCorrelationPlot):
+class SeasonCorrelationBarPlot(CorrelationBarPlot, SeasonCorrelationPlot):
+    """Bar plot showing correlations between seasonal outcomes and features."""
+
     feature_name = 'mean_temperature'  # Example feature to correlate with season_mean
 
+    def __init__(self, df: pd.DataFrame):
+        # Initialize the SeasonCorrelationPlot parent
+        SeasonCorrelationPlot.__init__(self, df)
+
     def data(self) -> pd.DataFrame:
-        df = super().data()
+        """Compute correlations between seasonal outcomes and features."""
+        df = SeasonCorrelationPlot.data(self)
         last_months_subset = df[df['seasonal_month'] >= 9].copy()
         last_months_subset['seasonal_month'] -= 12
         last_months_subset['season_idx'] += 1
@@ -80,7 +88,7 @@ class SeasonCorrelationBarPlot(SeasonCorrelationPlot):
                     correlations.append({
                         'location': location,
                         'seasonal_month': seasonal_month,
-                        f'correlation': corr,
+                        'correlation': corr,
                         'feature': feature_name,
                         'outcome': outcome,
                         'combination': f'{feature_name}_vs_season_{outcome}'
@@ -89,22 +97,14 @@ class SeasonCorrelationBarPlot(SeasonCorrelationPlot):
         return pd.DataFrame(correlations)
 
     def plot(self) -> alt.FacetChart:
-        df = self.data()
-        return alt.Chart(df).mark_bar().encode(
-            x=alt.X('seasonal_month:O', title='Seasonal Month'),
-            y=alt.Y('correlation:Q', title='Correlation (Season Max vs Temperature)'),
-            color=alt.Color('correlation:Q',
-                          scale=alt.Scale(scheme='redblue', domain=[-1, 1]),
-                          title='Correlation'),
-            tooltip=['location:N', 'seasonal_month:O', 'correlation:Q']
-        ).facet(
-            column=alt.Column('location:N', title='Location'),
-            row = alt.Row('combination:N', title='Feature vs Outcome')
-        ).properties(
-            title={
-                "text": "Seasonal Correlation Analysis",
-                "subtitle": "Correlation between season maximum disease cases and mean temperature by seasonal month and location. Red bars indicate negative correlation, blue bars indicate positive correlation."
-            }
+        """Create bar plot using base class with custom parameters."""
+        return super().plot(
+            title="Seasonal Correlation Analysis",
+            subtitle="Correlation between seasonal disease outcomes and features by location. Red bars indicate negative correlation, blue bars indicate positive correlation.",
+            x_col='seasonal_month',
+            x_title='Seasonal Month',
+            row_facet='combination',
+            row_title='Feature vs Outcome'
         )
 
 
