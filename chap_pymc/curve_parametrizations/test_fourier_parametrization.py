@@ -72,7 +72,7 @@ def test_vietnam_y_xarray_fixture(vietnam_y_xarray):
 def test_fourier_parametrization(y, coords):
     """Test Fourier parametrization with synthetic data and create faceted plot"""
     from chap_pymc.curve_parametrizations.fourier_parametrization_plots import plot_faceted_predictions
-    coords |= {'harmonic': np.arange(1, 3)}  # Add harmonic coordinate for plotting
+    coords |= {'harmonic': np.arange(0, 3)}  # Add harmonic coordinate (0=baseline, 1-2=harmonics)
     with pm.Model(coords=coords) as model:
         FourierParametrization().get_model(y)
         idata = pm.sample(draws=100, tune=100, progressbar=True, return_inferencedata=True)
@@ -96,7 +96,7 @@ def test_vietnam_fourier_fit(vietnam_y_xarray):
         'location': vietnam_y_xarray.coords['location'].values,
         'year': vietnam_y_xarray.coords['year'].values,
         'month': vietnam_y_xarray.coords['month'].values,
-        'harmonic': np.arange(1, n_harmonics+1)  # Add harmonic coordinate for plotting
+        'harmonic': np.arange(0, n_harmonics+1)  # Add harmonic coordinate (0=baseline, 1-n=harmonics)
     }
     # Build and sample the model
     with pm.Model(coords=coords) as model:
@@ -127,7 +127,7 @@ def test_vietnam_parameter_correlations(viet_model_input):
         'location': vietnam_y.coords['location'].values,
         'year': vietnam_y.coords['year'].values,
         'month': vietnam_y.coords['month'].values,
-        'harmonic': np.arange(1, n_harmonics+1)  # Add harmonic coordinate for plotting
+        'harmonic': np.arange(0, n_harmonics+1)  # Add harmonic coordinate (0=baseline, 1-n=harmonics)
     }
 
 
