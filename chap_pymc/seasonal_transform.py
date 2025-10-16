@@ -108,7 +108,21 @@ class SeasonalTransform:
 
     def get_xarray(self, feature_name) -> xarray.DataArray:
         s = self._df.set_index(['location', 'season_idx', 'seasonal_month'])[feature_name].sort_index()
-        return s.to_xarray()
+        data_array = s.to_xarray()
+
+        # Add actual month names as coordinates
+        month_names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+        seasonal_months = data_array.coords['seasonal_month'].values
+
+        # Calculate actual calendar months from seasonal months
+        # seasonal_month i corresponds to calendar month (self._min_month - 1 + i) % 12
+        actual_month_indices = [(self._min_month - 1 + sm) % 12 for sm in seasonal_months]
+        month_labels = [month_names[idx] for idx in actual_month_indices]
+
+        # Assign month names as coordinates
+        data_array = data_array.assign_coords(month_name=('seasonal_month', month_labels))
+
+        return data_array
 
     def __getitem__(self, feature_name) -> np.ndarray:
         locations = self._df['location'].unique()
@@ -147,15 +161,21 @@ def test_seasonal_transform(df: pd.DataFrame):
     assert pivoted.shape == (7, 13, 12), pivoted
 
 def test_xarray(colombia_df: pd.DataFrame):
+    import altair
     df = colombia_df
     df['y'] = np.log1p(df['disease_cases'])
     y = SeasonalTransform(df).get_xarray('y')
     mean_y = y.mean(dim='seasonal_month')
     temp = SeasonalTransform(df).get_xarray('mean_temperature')
     corr = xarray.corr(mean_y, temp, dim='season_idx')
-    df = corr.to_dataframe(name='correlation').reset_index()
-    chart = altair.Chart(df).mark_bar().encode(
-        x='seasonal_month:O',
+    corr_df = corr.to_dataframe(name='correlation').reset_index()
+
+    # Add month names from the coordinate
+    month_name_map = dict(zip(y.coords['seasonal_month'].values, y.coords['month_name'].values))
+    corr_df['month_name'] = corr_df['seasonal_month'].map(month_name_map)
+
+    chart = altair.Chart(corr_df).mark_bar().encode(
+        x=altair.X('month_name:O', title='Month', sort=list(y.coords['month_name'].values)),
         y='correlation:Q',
         color=altair.Color('correlation:Q', scale=altair.Scale(scheme='redblue', domain=[-1, 1]))
     ).facet(
