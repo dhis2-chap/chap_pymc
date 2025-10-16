@@ -1,3 +1,5 @@
+import arviz as az
+import matplotlib.pyplot as plt
 import pymc as pm
 import numpy as np
 import pytest
@@ -96,16 +98,21 @@ def viet_coords(viet_model_input):
         'harmonic': np.arange(0, n_harmonics + 1),  # [0, 1, 2, 3]: 0=baseline, 1-3=oscillating
         'feature': viet_model_input.X.coords['feature'].values
     }
+@pytest.fixture
+def viet_idata_path():
+    return 'vietnam_fourier_parametrization_fit.nc'
 
-
-def test_vietnam_regression(viet_model_input, viet_coords):
+def test_vietnam_regression(viet_model_input, viet_coords, viet_idata_path):
     n_harmonics = len(viet_coords['harmonic']) - 1  # Subtract 1 for baseline
     with pm.Model(coords=viet_coords) as model:
         m = FourierParametrization(FourierHyperparameters(n_harmonics=n_harmonics))
         m.get_regression_model(viet_model_input.X, viet_model_input.y)
         pm.model_to_graphviz(model).render('fourier_graph', format='png', view=True)
-        idata = pm.sample(draws=500, tune=500, progressbar=True, return_inferencedata=True)
-        az.plot_posterior(idata, var_names=['slope', 'a_mu', 'a_sigma', 'sigma'])
+        idata = pm.sample(draws=500, tune=500, chains=4, progressbar=True, return_inferencedata=True)
+        az.plot_posterior(idata, var_names=['slope'])
+        plt.show()
+    # Save idata for inspection
+    idata.to_netcdf(viet_idata_path)
     # Extract posterior predictions
     mu_posterior = idata.posterior['mu']  # (chain, draw, location, year, month)
     mu_mean = mu_posterior.mean(dim=['chain', 'draw'])  # (location, year, month)
@@ -114,6 +121,51 @@ def test_vietnam_regression(viet_model_input, viet_coords):
 
     # Create plot using plotting function
     plot_vietnam_faceted_predictions(viet_model_input.y, mu_mean, mu_lower, mu_upper, viet_coords)
+
+def test_extract_samples(viet_idata_path):
+    """Test that we can reload idata and extract samples"""
+    idata = az.from_netcdf(viet_idata_path)
+    print(idata)
+    slope_samples = idata.posterior['slope']
+    print(f"Slope samples shape: {slope_samples.shape}")
+    assert slope_samples.shape[0] > 0  # Chains
+    assert slope_samples.shape[1] > 0  # Draws
+    assert slope_samples.shape[2] == 3  # Features
+    assert slope_samples.shape[3] == 4  # Harmonics (including baseline)
+
+
+def test_extract_predictions(viet_idata_path, viet_model_input):
+    """Test extracting prediction samples from last year"""
+    idata = az.from_netcdf(viet_idata_path)
+
+    # Create FourierParametrization instance
+    model = FourierParametrization(FourierHyperparameters(n_harmonics=3))
+
+    # Extract predictions
+    predictions = model.extract_predictions(idata, viet_model_input)
+
+    print(f"\nPredictions shape: {predictions.shape}")
+    print(f"Predictions dims: {predictions.dims}")
+    print(f"Last month: {viet_model_input.last_month}")
+    print(f"Prediction months: {predictions.coords['month'].values}")
+
+    # Check shape
+    expected_n_pred_months = 12 - (viet_model_input.last_month + 1)
+    assert predictions.dims == ('chain', 'draw', 'location', 'month')
+    assert predictions.shape[0] == 4  # chains
+    assert predictions.shape[1] == 500  # draws
+    assert predictions.shape[2] == 19  # locations (Vietnam dataset)
+    assert predictions.shape[3] == expected_n_pred_months  # prediction months
+
+    # Check coordinates exist and are labeled
+    assert 'location' in predictions.coords
+    assert 'month' in predictions.coords
+    assert len(predictions.coords['location']) == 19
+
+    # Compute mean prediction per location
+    pred_mean = predictions.mean(dim=['chain', 'draw'])
+    print(f"\nMean predictions shape: {pred_mean.shape}")
+    print(f"Sample predictions for first location:\n{pred_mean.isel(location=0).values}")
 
 
 def test_vietnam_fourier_fit(vietnam_y_xarray):
