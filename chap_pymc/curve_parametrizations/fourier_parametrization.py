@@ -26,7 +26,8 @@ class FourierParametrization:
 
     def get_model(self, y: xarray.DataArray, A_offset: float | pmd.DimDistribution = 0.0):
         a_mu = pmd.Normal('a_mu', mu=0, sigma=10, dims=('location', 'harmonic'))
-        a_sigma = pmd.HalfNormal('a_sigma', sigma=10, dims=('harmonic',))
+        ha_sigma = pmd.HalfNormal('harmonic_a_sigma', sigma=1, dims=('harmonic',))
+        a_sigma = pmd.HalfNormal('a_sigma', sigma=ha_sigma, dims=('harmonic', 'location'))
         A = pmd.Normal('A', mu=a_mu, sigma=a_sigma, dims=('location', 'year', 'harmonic'))
         A = A + A_offset
         ar_effect = self._ar_effect(y) if self.hyper_params.do_ar_effect else 0
