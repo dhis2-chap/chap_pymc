@@ -1,10 +1,12 @@
 from typing import Literal
 
+#import altair
 import numpy as np
 import pandas as pd
 import logging
 
 import pydantic
+import xarray
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +106,10 @@ class SeasonalTransform:
         )
         return chart
 
+    def get_xarray(self, feature_name) -> xarray.DataArray:
+        s = self._df.set_index(['location', 'season_idx', 'seasonal_month'])[feature_name].sort_index()
+        return s.to_xarray()
+
     def __getitem__(self, feature_name) -> np.ndarray:
         locations = self._df['location'].unique()
         n_locations = len(locations)
@@ -139,6 +145,27 @@ def test_seasonal_transform(df: pd.DataFrame):
     st = SeasonalTransform(df)
     pivoted = st['y']
     assert pivoted.shape == (7, 13, 12), pivoted
+
+def test_xarray(colombia_df: pd.DataFrame):
+    df = colombia_df
+    df['y'] = np.log1p(df['disease_cases'])
+    y = SeasonalTransform(df).get_xarray('y')
+    mean_y = y.mean(dim='seasonal_month')
+    temp = SeasonalTransform(df).get_xarray('mean_temperature')
+    corr = xarray.corr(mean_y, temp, dim='season_idx')
+    df = corr.to_dataframe(name='correlation').reset_index()
+    chart = altair.Chart(df).mark_bar().encode(
+        x='seasonal_month:O',
+        y='correlation:Q',
+        color=altair.Color('correlation:Q', scale=altair.Scale(scheme='redblue', domain=[-1, 1]))
+    ).facet(
+        facet='location:N',
+        columns=4
+    ).properties(
+        title='Correlation between mean seasonal disease cases and mean temperature by seasonal month and location'
+    )
+    chart.save('seasonal_correlation.html')
+    chart.save('seasonal_correlation.png')
 
 def test_right_pad(df: pd.DataFrame):
     df['y'] = np.log1p(df['disease_cases'])

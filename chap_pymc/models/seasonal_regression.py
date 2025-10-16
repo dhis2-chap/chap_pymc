@@ -22,7 +22,7 @@ except ImportError:
     alt = None
 import pytest
 
-from chap_pymc.mcmc_params import MCMCParams
+from chap_pymc.inference_params import InferenceParams
 from chap_pymc.seasonal_transform import SeasonalTransform, TransformParameters
 from chap_pymc.model_input_creator import ModelInputCreator, ModelInput
 
@@ -72,10 +72,10 @@ class ModelParams(ModelDefParams):
     mask_empty_seasons: bool = False
 
 class SeasonalRegression:
-    def __init__(self, prediction_length=3, lag=3, mcmc_params=MCMCParams(), model_params=ModelParams()):
+    def __init__(self, prediction_length=3, lag=3, inference_params=InferenceParams(), model_params=ModelParams()):
         self._prediction_length = prediction_length
         self._lag = lag
-        self._mcmc_params = mcmc_params
+        self._inference_params = inference_params
         self._model_params = model_params
         self._explanation_plots = []
 
@@ -87,7 +87,7 @@ class SeasonalRegression:
         model_input = self.create_model_input(training_data)
         with pm.Model() as _:
             self.define_stable_model(model_input)
-            idata = pm.sample(**self._mcmc_params.model_dump())
+            idata = pm.sample(**self._inference_params.model_dump())
         if TESTING and False:
             self.plot_effect_trace(idata)
             self.pyplot_last_year(model_input, idata)
@@ -116,7 +116,7 @@ class SeasonalRegression:
             # define_stable_model(model_input, self._model_params)
             #graph = pm.model_to_graphviz(model)
             #graph.render('model_graph', format='png', view=True)
-            approx = pm.fit(n=self._mcmc_params.n_iterations, method='advi')
+            approx = pm.fit(n=self._inference_params.n_iterations, method='advi')
         last_month = model_input.last_month
         posterior_samples = approx.sample(n_samples)
         #az.plot_posterior(posterior_samples, var_names=['slope', 'intercept', 'scale_mu', 'scale_sigma'])
@@ -132,7 +132,7 @@ class SeasonalRegression:
 
         with pm.Model() as model:
             self.define_stable_model(model_input)
-            approx = pm.fit(n=self._mcmc_params.n_iterations, method='advi')
+            approx = pm.fit(n=self._inference_params.n_iterations, method='advi')
 
         # Draw samples from the approximation
         posterior_samples = approx.sample(n_samples)
@@ -553,7 +553,7 @@ class SeasonalRegression:
 def test_nepal(nepal_data: pd.DataFrame):
     global TESTING
     TESTING = True
-    model = SeasonalRegression(mcmc_params=MCMCParams(chains=2, tune=200, draws=200),
+    model = SeasonalRegression(inference_params=InferenceParams(chains=2, tune=200, draws=200),
                                model_params=ModelParams(errors='rw', use_mixture=True),
                                lag=3, prediction_length=3)
 
@@ -564,7 +564,7 @@ def test_nepal(nepal_data: pd.DataFrame):
 def test_seasonal_regression(large_df: pd.DataFrame):
     global TESTING
     # TESTING = True
-    model = SeasonalRegression(mcmc_params=MCMCParams(chains=4, tune=400, draws=400).debug(),
+    model = SeasonalRegression(inference_params=InferenceParams(chains=4, tune=400, draws=400).debug(),
                                model_params=ModelParams(errors='rw'),
                                lag=3, prediction_length=3)
 
@@ -577,7 +577,7 @@ def test_seasonal_regression(large_df: pd.DataFrame):
 def test_advi(large_df: pd.DataFrame):
     global TESTING
     #TESTING = True
-    model = SeasonalRegression(mcmc_params=MCMCParams().debug(),
+    model = SeasonalRegression(inference_params=InferenceParams().debug(),
                                model_params=ModelParams(errors='rw'),
                                lag=3, prediction_length=3)
 
@@ -589,13 +589,13 @@ def test_advi(large_df: pd.DataFrame):
 def test_begin_season(thai_begin_season):
     #first_group = next(iter(thai_begin_season.groupby('location')))[1]
     #hai_begin_season = first_group
-    model = SeasonalRegression(mcmc_params=MCMCParams(), lag=3, prediction_length=3)
+    model = SeasonalRegression(inference_params=InferenceParams(), lag=3, prediction_length=3)
     model.predict(thai_begin_season)
 
 def test_viet_begin_season(viet_begin_season):
     global TESTING
     TESTING = True
-    model = SeasonalRegression(mcmc_params=MCMCParams(), lag=3, prediction_length=3)
+    model = SeasonalRegression(inference_params=InferenceParams(), lag=3, prediction_length=3)
     model.predict_with_dims(viet_begin_season)
 
 @pytest.fixture()
@@ -611,8 +611,8 @@ def model_input():
     )
 
 def test_anti_pattern(model_input):
-    params = MCMCParams(chains=2, draws=200, tune=500)
-    reg = SeasonalRegression(mcmc_params=params, lag=3, prediction_length=3)
+    params = InferenceParams(chains=2, draws=200, tune=500)
+    reg = SeasonalRegression(inference_params=params, lag=3, prediction_length=3)
     with pm.Model() as model:
         reg.define_stable_model(model_input)
         idata = pm.sample(**params.model_dump())
@@ -670,7 +670,7 @@ def predict(csv_file: str):
     preds.to_csv('seasonal_regression_output.csv', index=False)
 
 @app.command()
-def explain(csv_file: str, output_folder: str = '.', mcmc_params: MCMCParams = MCMCParams()):
+def explain(csv_file: str, output_folder: str = '.', inference_params: InferenceParams = InferenceParams()):
     import chap_core
     from chap_core.assessment.dataset_splitting import train_test_generator
     dataset = chap_core.data.DataSet.from_csv(csv_file)
@@ -678,7 +678,7 @@ def explain(csv_file: str, output_folder: str = '.', mcmc_params: MCMCParams = M
     for t, (historic, future, truth) in enumerate(test_instances):
         df = historic.to_pandas()
         df.time_period = df.time_period.astype(str)
-        model = SeasonalRegression(mcmc_params=mcmc_params)
+        model = SeasonalRegression(inference_params=inference_params)
         model.predict(df)
         assert len(model.explanation_plots)>0
         for i, plot in enumerate(model.explanation_plots):
@@ -687,7 +687,7 @@ def explain(csv_file: str, output_folder: str = '.', mcmc_params: MCMCParams = M
 
 
 def test_explain(data_path, tmp_path):
-    explain(data_path/'training_data.csv', tmp_path, MCMCParams().debug())
+    explain(data_path/'training_data.csv', tmp_path, InferenceParams().debug())
 
 
 

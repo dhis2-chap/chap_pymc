@@ -1,4 +1,4 @@
-from chap_pymc.mcmc_params import MCMCParams
+from chap_pymc.inference_params import InferenceParams
 from chap_pymc.models.seasonal_regression import SeasonalRegression, ModelParams
 from chap_pymc.models.seasonal_fourier_regression import SeasonalFourierRegression
 import cyclopts
@@ -15,7 +15,8 @@ def predict(model: str,
             future_data: str,
             out_file: str,
             model_config: str | None = None,
-            model_type: str = 'fourier'
+            model_type: str = 'fourier',
+            inference_method: str = 'advi'
 ):
     """
     Generate predictions using either seasonal or Fourier regression model.
@@ -26,22 +27,29 @@ def predict(model: str,
         future_data: Path to CSV with future data (not used currently)
         out_file: Path to save predictions CSV
         model_config: Optional path to model configuration
+        inference_method: Inference method to use ('hmc' or 'advi')
     """
     training_df = pd.read_csv(historic_data)
 
     if model_type == 'fourier':
         # Fourier-based seasonal model
+        if inference_method == 'hmc':
+            inference_params = InferenceParams(method='hmc', chains=4, tune=500, draws=500)
+        else:  # advi
+            inference_params = InferenceParams(method='advi', n_iterations=200_000)
+
         model = SeasonalFourierRegression(
             prediction_length=3,
             lag=3,
             n_harmonics=3,
-            mcmc_params=MCMCParams(chains=4, tune=500, draws=500)
+            inference_params=inference_params
         )
         predictions = model.predict(training_df, n_samples=1000)
     else:
         # Traditional seasonal regression model
+        inference_params = InferenceParams(method='advi', n_iterations=200_000)
         model = SeasonalRegression(
-            mcmc_params=MCMCParams(n_iterations=200_000),
+            inference_params=inference_params,
         )
         predictions = model.predict_with_dims(training_df)
 

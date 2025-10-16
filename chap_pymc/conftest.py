@@ -9,7 +9,9 @@ from chap_core.assessment.dataset_splitting import train_test_generator
 @pytest.fixture
 def df() -> pd.DataFrame:
     p = Path(__file__).parent.parent/ 'test_data' / 'training_data.csv'
-    return pd.read_csv(p)
+    df = pd.read_csv(p)
+    df = pd.concat([group.interpolate() for _, group in df.groupby('location')]).reset_index()
+    return df
 
 @pytest.fixture
 def data_path() -> Path:
@@ -23,6 +25,11 @@ def large_df(data_path) -> pd.DataFrame:
 @pytest.fixture
 def thailand_ds(data_path) -> pd.DataFrame:
     return DataSet.from_csv(data_path / 'thailand.csv')
+
+@pytest.fixture
+def colombia_df(data_path) -> pd.DataFrame:
+    return pd.read_csv(data_path / 'colombia.csv')
+
 
 @pytest.fixture
 def thai_begin_season(data_path) -> pd.DataFrame:

@@ -3,15 +3,14 @@ from typing import Any
 import numpy as np
 import pydantic
 import pymc.dims as pmd
-import pytest
 import xarray
 import pymc as pm
 import pytensor.xtensor as px
 import pytensor.tensor as pt
-from pytensor.xtensor.type import XTensorConstant, XTensorType, XTensorVariable, as_xtensor
-from xarray import Variable
+from pytensor.xtensor.type import XTensorVariable, as_xtensor
 
-from chap_pymc.model_input_creator import ModelInputCreator, ModelInput
+
+from chap_pymc.model_input_creator import  ModelInput
 
 class FourierHyperparameters(pydantic.BaseModel):
     n_harmonics: int = 2
