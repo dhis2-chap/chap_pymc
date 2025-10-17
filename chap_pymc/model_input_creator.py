@@ -8,6 +8,9 @@ import xarray
 
 from chap_pymc.seasonal_transform import SeasonalTransform, TransformParameters
 
+# Constants
+MONTHS_PER_YEAR = 12
+
 
 @dataclasses.dataclass
 class ModelInput:
@@ -112,6 +115,38 @@ class ModelInputCreator:
 
         return seasonal_pattern, std_per_month_per_loc
 
+    def _extract_lagged_features(
+        self,
+        feature_array: np.ndarray,
+        last_month: int,
+        lag: int
+    ) -> np.ndarray:
+        """
+        Extract lagged features ending at last_month.
+
+        Given a feature array with shape (locations, years, months) and a last_month index,
+        extract the `lag` months ending at last_month (inclusive).
+
+        Example:
+            If last_month=5 and lag=3, extracts months [3, 4, 5]
+            If last_month=2 and lag=3, extracts months [0, 1, 2]
+
+        Args:
+            feature_array: Array of shape (locations, years, months) containing feature values
+            last_month: Index of the last month to include (0-indexed, after padding)
+            lag: Number of lagged months to extract
+
+        Returns:
+            Array of shape (locations, years, lag) with lagged features
+        """
+        start_month = last_month - lag + 1
+        end_month = last_month + 1  # +1 because slicing is exclusive at end
+        lagged = feature_array[:, :, start_month:end_month]
+
+        # Standardize features
+        lagged = (lagged - np.nanmean(lagged)) / np.nanstd(lagged)
+        return lagged
+
     def create_X(
         self,
         seasonal_data: SeasonalTransform
@@ -127,8 +162,11 @@ class ModelInputCreator:
         """
         last_month = seasonal_data.last_seasonal_month
         X = {feature: seasonal_data[feature] for feature in self.features}
-        temp = X['mean_temperature'][:, :, last_month - self._lag + 1:last_month + 1]
-        temp = (temp - np.nanmean(temp)) / np.nanstd(temp)  # Standardize predictor
+        temp = self._extract_lagged_features(
+            X['mean_temperature'],
+            last_month,
+            self._lag
+        )
         return temp
 
     def to_xarray(self, model_input: ModelInput) -> ModelInput:
@@ -212,8 +250,8 @@ def test_model_input_creator():
     for loc in locations:
         for i, date in enumerate(dates):
             time_period = date.strftime('%Y-%m')
-            disease_cases = np.sin(2 * np.pi * i / 12) + 5 + np.random.randn() * 0.1
-            mean_temperature = 20 + 10 * np.sin(2 * np.pi * i / 12) + np.random.randn()
+            disease_cases = np.sin(2 * np.pi * i / MONTHS_PER_YEAR) + 5 + np.random.randn() * 0.1
+            mean_temperature = 20 + 10 * np.sin(2 * np.pi * i / MONTHS_PER_YEAR) + np.random.randn()
             data.append({
                 'location': loc,
                 'time_period': time_period,
@@ -235,10 +273,10 @@ def test_model_input_creator():
 
     assert model_input.y.ndim == 3
     assert model_input.y.shape[0] == n_locations
-    assert model_input.y.shape[2] == 12  # months
+    assert model_input.y.shape[2] == MONTHS_PER_YEAR  # months
 
-    assert model_input.seasonal_pattern.shape == (n_locations, 1, 12)
-    assert model_input.seasonal_errors.shape == (n_locations, 1, 12)
+    assert model_input.seasonal_pattern.shape == (n_locations, 1, MONTHS_PER_YEAR)
+    assert model_input.seasonal_errors.shape == (n_locations, 1, MONTHS_PER_YEAR)
 
     # Check that seasonal_data was stored
     assert creator.seasonal_data is not None
@@ -256,8 +294,8 @@ def test_model_input_to_xarray():
     for loc in locations:
         for i, date in enumerate(dates):
             time_period = date.strftime('%Y-%m')
-            disease_cases = np.sin(2 * np.pi * i / 12) + 5 + np.random.randn() * 0.1
-            mean_temperature = 20 + 10 * np.sin(2 * np.pi * i / 12) + np.random.randn()
+            disease_cases = np.sin(2 * np.pi * i / MONTHS_PER_YEAR) + 5 + np.random.randn() * 0.1
+            mean_temperature = 20 + 10 * np.sin(2 * np.pi * i / MONTHS_PER_YEAR) + np.random.randn()
             data.append({
                 'location': loc,
                 'time_period': time_period,
