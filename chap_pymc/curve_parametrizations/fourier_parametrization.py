@@ -15,6 +15,8 @@ from chap_pymc.model_input_creator import  ModelInput
 class FourierHyperparameters(pydantic.BaseModel):
     n_harmonics: int = 2
     do_ar_effect: bool = False
+    do_mixture: bool = False
+    mixture_weight_prior: tuple[float, float] = (0.5, 0.5)  # U-shaped: heavy at 0 and 1, low in middle
 
 class FourierParametrization:
 
@@ -24,16 +26,39 @@ class FourierParametrization:
     def get_regression_model(self, X: xarray.DataArray, y: xarray.DataArray):
         return self.get_model(y, A_offset=self._linear_effect(X))
 
+    def _mixture_weights(self, n_years) -> float | pmd.DimDistribution:
+        if self.hyper_params.do_mixture:
+            # Continuous mixture weight per location-year: 0 < z < 1
+            # z=1 means full seasonal pattern, z=0 means flat line at 0
+            alpha, beta = self.hyper_params.mixture_weight_prior
+
+            alpha = np.full(n_years, alpha)
+            beta = np.full(n_years, beta)
+
+            alpha[-1] = 15.0  # Strong prior towards 1 in last year
+            beta[-1] = 1.0
+            alpha, beta = (as_xtensor(v, dims=('year',)) for v in (alpha, beta))
+
+            z = pmd.Beta('mixture_weight',
+                         alpha=alpha, beta=beta, dims=('location', 'year'))
+            return z
+        else:
+            return 1.0
+
     def get_model(self, y: xarray.DataArray, A_offset: float | pmd.DimDistribution = 0.0):
         a_mu = pmd.Normal('a_mu', mu=0, sigma=10, dims=('location', 'harmonic'))
         ha_sigma = pmd.HalfNormal('harmonic_a_sigma', sigma=1, dims=('harmonic',))
-        a_sigma = pmd.HalfNormal('a_sigma', sigma=ha_sigma, dims=('harmonic', 'location'))
+        a_sigma = pmd.HalfNormal('a_sigma', sigma=ha_sigma, dims=('harmonic',))
         A = pmd.Normal('A', mu=a_mu, sigma=a_sigma, dims=('location', 'year', 'harmonic'))
         A = A + A_offset
         ar_effect = self._ar_effect(y) if self.hyper_params.do_ar_effect else 0
         mu = self._calculate_mu(A, n_months=y.shape[-1]) + ar_effect
-        sigma = pm.HalfNormal('sigma', sigma=1, dims=('location',))
-        pm.Normal('y_obs', mu=mu.values, sigma=sigma, observed=y)
+        mu = pmd.Deterministic('last_mu', mu * self._mixture_weights(n_years=y.shape[1]))  # Shape: (location, year, month)
+        sigma = pmd.HalfNormal('sigma', sigma=1, dims=('location',))
+
+        # Important! Using pmd in the observed statement seems to mess up the inference. Use raw values instead.
+        # Careful with broadcasting here: sigma is (location,) and mu is (location, year, month)
+        pm.Normal('y_obs', mu=mu.values, sigma=sigma.values[:, None, None], observed=y)
 
     def _ar_effect(self, y) -> Any:
         L, Y, M = y.shape
@@ -41,6 +66,7 @@ class FourierParametrization:
 
         init_dist = pm.Normal.dist(np.zeros((L, Y)), ar_sigma[..., None])  # Broadcast here
 
+        #This is not avaible in pmd, so we use pm directly and then convert to pmd
         epsilon = pm.GaussianRandomWalk('epsilon',
                                         init_dist=init_dist,
                                         mu=0,

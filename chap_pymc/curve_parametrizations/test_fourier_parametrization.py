@@ -1,12 +1,15 @@
 import arviz as az
 import matplotlib.pyplot as plt
+import pandas as pd
 import pymc as pm
 import numpy as np
 import pytest
 import xarray
 from chap_pymc.curve_parametrizations.fourier_parametrization_plots import plot_vietnam_faceted_predictions
 from chap_pymc.curve_parametrizations.fourier_parametrization import FourierParametrization, FourierHyperparameters
+from chap_pymc.inference_params import InferenceParams
 from chap_pymc.model_input_creator import ModelInputCreator
+from chap_pymc.models.seasonal_fourier_regression import SeasonalFourierRegression
 
 
 @pytest.fixture()
@@ -102,6 +105,31 @@ def viet_coords(viet_model_input):
 def viet_idata_path():
     return 'vietnam_fourier_parametrization_fit.nc'
 
+@pytest.fixture()
+def nepal_model_input(nepal_data):
+    creator = ModelInputCreator(prediction_length=3, lag=3, mask_empty_seasons=False)
+    model_input = creator.create_model_input(nepal_data)
+    return creator.to_xarray(model_input)
+
+
+
+
+def test_nepal_regresion(nepal_data):
+    fourier_regression = SeasonalFourierRegression(
+        prediction_length=3,
+        lag=3,
+        fourier_hyperparameters=FourierHyperparameters(n_harmonics=2, do_mixture=True),
+        inference_params=InferenceParams(method='advi', n_iterations=100_000, progressbar=True)
+    )
+    preds, idata = fourier_regression.predict(nepal_data,  return_inference_data=True)
+    mu_posterior = idata.posterior['last_mu']  # (chain, draw, location, year, month)
+    mu_mean = mu_posterior.mean(dim=['chain', 'draw'])  # (location, year, month)
+    mu_lower = mu_posterior.quantile(0.025, dim=['chain', 'draw'])
+    mu_upper = mu_posterior.quantile(0.975, dim=['chain', 'draw'])
+
+    # Create plot using plotting function
+    plot_vietnam_faceted_predictions(fourier_regression.model_input.y, mu_mean, mu_lower, mu_upper, fourier_regression.stored_coords, output_file='nepal_fourier_fit.png')
+
 def test_vietnam_regression(viet_model_input, viet_coords, viet_idata_path):
     n_harmonics = len(viet_coords['harmonic']) - 1  # Subtract 1 for baseline
     with pm.Model(coords=viet_coords) as model:
@@ -121,6 +149,25 @@ def test_vietnam_regression(viet_model_input, viet_coords, viet_idata_path):
 
     # Create plot using plotting function
     plot_vietnam_faceted_predictions(viet_model_input.y, mu_mean, mu_lower, mu_upper, viet_coords)
+
+def test_vietnam(viet_begin_season, debug_model):
+    preds = debug_model.predict(viet_begin_season)
+
+
+def test_nepal(nepal_data: pd.DataFrame, debug_model):
+    global TESTING
+    TESTING = True
+    preds = debug_model.predict(nepal_data)
+
+@pytest.fixture
+def debug_model() -> SeasonalFourierRegression:
+    return SeasonalFourierRegression(
+        prediction_length=3,
+        lag=3,
+        fourier_hyperparameters=FourierHyperparameters(n_harmonics=2, do_mixture=True),
+        inference_params=InferenceParams(method='advi', n_iterations=1_000, progressbar=True)
+    )
+
 
 def test_extract_samples(viet_idata_path):
     """Test that we can reload idata and extract samples"""

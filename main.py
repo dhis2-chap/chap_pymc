@@ -1,3 +1,4 @@
+from chap_pymc.curve_parametrizations.fourier_parametrization import FourierHyperparameters
 from chap_pymc.inference_params import InferenceParams
 from chap_pymc.models.seasonal_regression import SeasonalRegression, ModelParams
 from chap_pymc.models.seasonal_fourier_regression import SeasonalFourierRegression
@@ -41,7 +42,7 @@ def predict(model: str,
         model = SeasonalFourierRegression(
             prediction_length=3,
             lag=3,
-            n_harmonics=3,
+            fourier_hyperparameters=FourierHyperparameters(n_harmonics=3, do_mixture=True),
             inference_params=inference_params
         )
         predictions = model.predict(training_df, n_samples=1000)

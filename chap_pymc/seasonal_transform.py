@@ -27,7 +27,7 @@ class SeasonalTransform:
         return {
             'location': self._df['location'].unique(),
             'year': np.arange(self._df['season_idx'].nunique()-1),
-            'month': np.arange(self.first_seasonal_month, self.first_seasonal_month + 12 + self._pad_left + self._pad_right),
+            'month': np.arange(12 + self._pad_left + self._pad_right),
         }
 
 
@@ -147,11 +147,18 @@ class SeasonalTransform:
                 left_pad_array[loc_idx, season_idx+1, month_idx+self._pad_left-n_months] = row[feature_name]
         if self._pad_right:
             logger.info(f"Padding {self._pad_right} months to the right")
+            logger.info(f"Before right pad: data_array.shape = {data_array.shape}, pad_array.shape = {pad_array.shape}")
             data_array = np.concatenate([data_array, pad_array], axis=-1)
+            logger.info(f"After right pad: data_array.shape = {data_array.shape}")
         if self._pad_left:
             logger.info(f"Padding {self._pad_left} months to the left")
+            logger.info(f"Before left pad: data_array.shape = {data_array.shape}, left_pad_array.shape = {left_pad_array.shape}")
             data_array = np.concatenate([left_pad_array, data_array], axis=-1)
-        return data_array[:, 1:]
+            logger.info(f"After left pad: data_array.shape = {data_array.shape}")
+        logger.info(f"Before dropping first year: data_array.shape = {data_array.shape}")
+        result = data_array[:, 1:]
+        logger.info(f"After dropping first year: result.shape = {result.shape}")
+        return result
 
 
 def test_seasonal_transform(df: pd.DataFrame):
@@ -159,6 +166,9 @@ def test_seasonal_transform(df: pd.DataFrame):
     st = SeasonalTransform(df)
     pivoted = st['y']
     assert pivoted.shape == (7, 13, 12), pivoted
+
+#def test_nepal_min(nepal_data: pd.DataFrame):
+#    SeasonalTransform(nepal_data)
 
 def test_xarray(colombia_df: pd.DataFrame):
     import altair
