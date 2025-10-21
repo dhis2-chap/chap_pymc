@@ -15,7 +15,7 @@ def test_seasonal_fourier_regression_predict(viet_begin_season):
         prediction_length=3,
         lag=3,
         fourier_hyperparameters=FourierHyperparameters(n_harmonics=2),
-        inference_params=InferenceParams(method='hmc', chains=2, tune=100, draws=100)
+        inference_params=InferenceParams(method='advi', n_iterations=10)
     )
 
     # Generate predictions
@@ -42,15 +42,21 @@ def test_seasonal_fourier_regression_predict(viet_begin_season):
     print(f"\nSample predictions for first location:")
     print(predictions[predictions['location'] == predictions['location'].iloc[0]].head())
 
+def test_viet_full_year(viet_full_year):
+    for i, (viet_instance, t) in enumerate(viet_full_year):
+        if i<7:
+            continue
+        test_seasonal_fourier_regression_advi(viet_instance, t)
 
-def test_seasonal_fourier_regression_advi(viet_begin_season):
+
+def test_seasonal_fourier_regression_advi(viet_begin_season, truth=None):
     """Test that SeasonalFourierRegression.predict works with ADVI (faster variational inference)"""
     # Create model with ADVI for faster inference
     model = SeasonalFourierRegression(
         prediction_length=3,
         lag=3,
         fourier_hyperparameters=FourierHyperparameters(n_harmonics=2),
-        inference_params=InferenceParams(method='advi', n_iterations=5000)
+        inference_params=InferenceParams(method='advi', n_iterations=10)
     )
 
     # Generate predictions using ADVI
@@ -60,6 +66,9 @@ def test_seasonal_fourier_regression_advi(viet_begin_season):
     assert isinstance(predictions, pd.DataFrame)
     assert 'location' in predictions.columns
     assert 'time_period' in predictions.columns
+    n_locations = viet_begin_season['location'].nunique()
+    n_pred_months = 3
+    assert len(predictions) == n_locations * n_pred_months, f"Expected {n_locations * n_pred_months} predictions, got {len(predictions)}"
 
     # Check that predictions are positive
     sample_cols = [c for c in predictions.columns if c.startswith('sample_')]
