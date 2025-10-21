@@ -8,7 +8,7 @@ import pymc as pm
 import arviz as az
 
 from chap_pymc.inference_params import InferenceParams
-from chap_pymc.model_input_creator import ModelInputCreator
+from chap_pymc.model_input_creator import FourierInputCreator
 from chap_pymc.curve_parametrizations.fourier_parametrization import (
     FourierParametrization,
     FourierHyperparameters
@@ -106,19 +106,17 @@ class SeasonalFourierRegression:
         Returns:
             DataFrame with predictions (and optionally InferenceData/approximation object)
         """
-        # Create model input
-        creator = ModelInputCreator(
+        # Create model input (returns xarray DataArrays directly)
+        creator = FourierInputCreator(
             prediction_length=self._prediction_length,
             lag=self._lag,
             mask_empty_seasons=self._mask_empty_seasons
         )
         model_input = creator.create_model_input(training_data)
-        model_input = creator.to_xarray(model_input)
-        self._seasonal_data = creator.seasonal_data
         self.model_input = model_input
-        # Set up model coordinates
-        coords = creator.seasonal_data.coords() | {
-            'feature': [f'temp_lag{self._lag - i}' for i in range(self._lag)],
+
+        # Set up model coordinates from model_input + harmonic dimension
+        coords = model_input.coords() | {
             'harmonic': np.arange(0, self._n_harmonics + 1)  # Include baseline (h=0)
         }
         self.stored_coords = coords  # For potential inspection later

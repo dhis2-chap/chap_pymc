@@ -14,22 +14,38 @@ MONTHS_PER_YEAR = 12
 
 @dataclasses.dataclass
 class ModelInput:
-    X: np.ndarray
-    y: np.ndarray
-    seasonal_pattern: np.ndarray
-    seasonal_errors: np.ndarray
+    """Model input with xarray DataArrays containing all coordinate information."""
+    X: xarray.DataArray  # (location, year, feature)
+    y: xarray.DataArray  # (location, year, month)
+    seasonal_pattern: xarray.DataArray  # (location, month)
+    seasonal_errors: xarray.DataArray  # (location, month)
     last_month: int
 
     def n_months(self) -> int:
         return self.y.shape[-1]
 
+    def n_years(self) -> int:
+        return self.y.shape[1]
 
-class ModelInputCreator:
+    def coords(self) -> dict[str, Any]:
+        """Extract PyMC coordinate dict from xarray DataArrays."""
+        return {
+            'location': self.y.coords['location'].values,
+            'year': self.y.coords['year'].values,
+            'month': self.y.coords['month'].values,
+            'feature': self.X.coords['feature'].values
+        }
+
+
+class FourierInputCreator:
     """
-    Creates model input from raw training data by:
-    1. Transforming data into seasonal format
-    2. Extracting features (e.g., lagged temperature)
-    3. Computing seasonal patterns
+    Creates xarray-based model input for SeasonalFourierRegression.
+
+    Transforms raw training data into seasonal format with proper coordinates:
+    1. Transforms data into seasonal format (locations, years, months)
+    2. Extracts lagged temperature features
+    3. Computes seasonal patterns
+    4. Returns xarray DataArrays with full coordinate information
     """
     features = ['mean_temperature']
 
@@ -39,25 +55,33 @@ class ModelInputCreator:
         lag: int = 3,
         mask_empty_seasons: bool = False
     ):
+        """
+        Initialize FourierInputCreator.
+
+        Args:
+            prediction_length: Number of months to predict ahead
+            lag: Number of lagged temperature months to use as features
+            mask_empty_seasons: Whether to mask seasons with low disease incidence
+        """
         self._prediction_length = prediction_length
         self._lag = lag
         self._mask_empty_seasons = mask_empty_seasons
-        self.seasonal_data: SeasonalTransform | None = None
+        self.seasonal_data: SeasonalTransform | None = None  # For backward compatibility
 
     def create_model_input(self, training_data: pd.DataFrame) -> ModelInput:
         """
-        Transform raw training data into model input arrays.
+        Transform raw training data into xarray-based model input.
 
         Args:
             training_data: DataFrame with columns ['location', 'time_period', 'disease_cases', 'mean_temperature', ...]
 
         Returns:
-            ModelInput with arrays shaped (locations, years, months/features)
+            ModelInput with xarray DataArrays containing coordinate information
         """
         training_data = training_data.copy()
         training_data['y'] = np.log1p(training_data['disease_cases']).interpolate()
 
-
+        # Transform to seasonal format
         seasonal_data = SeasonalTransform(
             training_data,
             TransformParameters(
@@ -65,26 +89,77 @@ class ModelInputCreator:
                 min_post_months=self._prediction_length
             )
         )
-        self.seasonal_data = seasonal_data
+        self.seasonal_data = seasonal_data  # Store for backward compatibility
 
-        X = self.create_X(seasonal_data)
-        y = seasonal_data['y']
-        seasonal_pattern, std_per_month_per_loc = self.get_seasonal_pattern(y)
+        # Extract numpy arrays
+        X_np = self.create_X(seasonal_data)
+        y_np = seasonal_data['y']
+        seasonal_pattern_np, std_per_month_per_loc_np = self.get_seasonal_pattern(y_np)
         last_month = seasonal_data.last_seasonal_month
+
+        # Get coordinate values
+        locations = seasonal_data._df['location'].unique()
+        n_years = y_np.shape[1]
+        n_months = y_np.shape[2]
+
+        coords_dict = {
+            'location': locations,
+            'year': np.arange(n_years),
+            'month': np.arange(n_months),
+            'feature': [f'temp_lag{self._lag - i}' for i in range(self._lag)]
+        }
+
+        # Convert to xarray DataArrays with proper coordinates
+        X = xarray.DataArray(
+            X_np,
+            dims=('location', 'year', 'feature'),
+            coords={
+                'location': coords_dict['location'],
+                'year': coords_dict['year'],
+                'feature': coords_dict['feature']
+            }
+        )
+
+        y = xarray.DataArray(
+            y_np,
+            dims=('location', 'year', 'month'),
+            coords={
+                'location': coords_dict['location'],
+                'year': coords_dict['year'],
+                'month': coords_dict['month']
+            }
+        )
+
+        seasonal_pattern = xarray.DataArray(
+            seasonal_pattern_np[:, 0, :],  # Squeeze middle dimension
+            dims=('location', 'month'),
+            coords={
+                'location': coords_dict['location'],
+                'month': coords_dict['month']
+            }
+        )
+
+        seasonal_errors = xarray.DataArray(
+            std_per_month_per_loc_np[:, 0, :],  # Squeeze middle dimension
+            dims=('location', 'month'),
+            coords={
+                'location': coords_dict['location'],
+                'month': coords_dict['month']
+            }
+        )
 
         import logging
         logger = logging.getLogger(__name__)
         logger.info(f"create_model_input: y.shape = {y.shape}")
         logger.info(f"create_model_input: last_seasonal_month = {last_month}")
-        logger.info(f"create_model_input: pad_left = {seasonal_data._pad_left}, pad_right = {seasonal_data._pad_right}")
-        model_input = ModelInput(
+
+        return ModelInput(
             X=X,
             y=y,
             seasonal_pattern=seasonal_pattern,
-            seasonal_errors=std_per_month_per_loc,
+            seasonal_errors=seasonal_errors,
             last_month=last_month
         )
-        return model_input
 
     def get_seasonal_pattern(
         self,
@@ -168,78 +243,9 @@ class ModelInputCreator:
         )
         return temp
 
-    def to_xarray(self, model_input: ModelInput) -> ModelInput:
-        """
-        Convert ModelInput arrays to xarray DataArrays with named dimensions.
-        This is useful for models that use pymc.dims for dimensional broadcasting.
 
-        Args:
-            model_input: ModelInput with numpy arrays
-
-        Returns:
-            ModelInput with xarray DataArrays
-        """
-        if self.seasonal_data is None:
-            raise ValueError("Must call create_model_input first to populate seasonal_data")
-
-        # Get coordinates from seasonal data and add feature names
-        coords = self.seasonal_data.coords() | {
-            'feature': [f'temp_lag{self._lag - i}' for i in range(self._lag)]
-        }
-
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.info(f"to_xarray: model_input.y.shape = {model_input.y.shape}")
-        logger.info(f"to_xarray: coords lengths - location={len(coords['location'])}, year={len(coords['year'])}, month={len(coords['month'])}")
-        logger.info(f"to_xarray: coords['month'] = {coords['month']}")
-
-        # Convert to xarray with named dimensions
-        model_input.X = xarray.DataArray(
-            model_input.X,
-            dims=('location', 'year', 'feature'),
-            coords={
-                'location': coords['location'],
-                'year': coords['year'],
-                'feature': coords['feature']
-            }
-        )
-
-        model_input.y = xarray.DataArray(
-            model_input.y,
-            dims=('location', 'year', 'month'),
-            coords={
-                'location': coords['location'],
-                'year': coords['year'],
-                'month': coords['month']
-            }
-        )
-
-        logger.info(f"to_xarray: after creating xarray, y.shape = {model_input.y.shape}")
-
-        # Squeeze middle dimension and convert to xarray
-        model_input.seasonal_pattern = xarray.DataArray(
-            model_input.seasonal_pattern[:, 0, :],
-            dims=('location', 'month'),
-            coords={
-                'location': coords['location'],
-                'month': coords['month']
-            }
-        )
-
-        model_input.seasonal_errors = xarray.DataArray(
-            model_input.seasonal_errors[:, 0, :],
-            dims=('location', 'month'),
-            coords={
-                'location': coords['location'],
-                'month': coords['month']
-            }
-        )
-
-        return model_input
-
-
-def test_model_input_creator():
-    """Test that ModelInputCreator produces the expected output shapes."""
+def test_fourier_input_creator():
+    """Test that FourierInputCreator produces xarray DataArrays with correct shapes and coordinates."""
     # Create synthetic data
     locations = ['LocationA', 'LocationB']
     n_months = 36  # 3 years of data
@@ -261,76 +267,44 @@ def test_model_input_creator():
     df = pd.DataFrame(data)
 
     # Create model input
-    creator = ModelInputCreator(prediction_length=3, lag=3, mask_empty_seasons=False)
+    creator = FourierInputCreator(prediction_length=3, lag=3, mask_empty_seasons=False)
     model_input = creator.create_model_input(df)
+
+    # Check that arrays are xarray DataArrays
+    assert isinstance(model_input.X, xarray.DataArray)
+    assert isinstance(model_input.y, xarray.DataArray)
+    assert isinstance(model_input.seasonal_pattern, xarray.DataArray)
+    assert isinstance(model_input.seasonal_errors, xarray.DataArray)
 
     # Check shapes
     n_locations = len(locations)
-    assert model_input.X.ndim == 3
     assert model_input.X.shape[0] == n_locations
     assert model_input.X.shape[2] == 3  # lag
 
-    assert model_input.y.ndim == 3
     assert model_input.y.shape[0] == n_locations
     assert model_input.y.shape[2] == MONTHS_PER_YEAR  # months
 
-    assert model_input.seasonal_pattern.shape == (n_locations, 1, MONTHS_PER_YEAR)
-    assert model_input.seasonal_errors.shape == (n_locations, 1, MONTHS_PER_YEAR)
-
-    # Check that seasonal_data was stored
-    assert creator.seasonal_data is not None
-    print("✓ ModelInputCreator test passed")
-
-
-def test_model_input_to_xarray():
-    """Test that to_xarray conversion works correctly."""
-    # Create synthetic data
-    locations = ['LocationA', 'LocationB']
-    n_months = 36  # 3 years of data
-    dates = pd.date_range('2020-01', periods=n_months, freq='MS')
-
-    data = []
-    for loc in locations:
-        for i, date in enumerate(dates):
-            time_period = date.strftime('%Y-%m')
-            disease_cases = np.sin(2 * np.pi * i / MONTHS_PER_YEAR) + 5 + np.random.randn() * 0.1
-            mean_temperature = 20 + 10 * np.sin(2 * np.pi * i / MONTHS_PER_YEAR) + np.random.randn()
-            data.append({
-                'location': loc,
-                'time_period': time_period,
-                'disease_cases': max(0, disease_cases),
-                'mean_temperature': mean_temperature
-            })
-
-    df = pd.DataFrame(data)
-
-    # Create model input
-    creator = ModelInputCreator(prediction_length=3, lag=3, mask_empty_seasons=False)
-    model_input = creator.create_model_input(df)
-
-    # Convert to xarray
-    model_input_xr = creator.to_xarray(model_input)
-
-    # Check that arrays are now xarray DataArrays
-    assert isinstance(model_input_xr.X, xarray.DataArray)
-    assert isinstance(model_input_xr.y, xarray.DataArray)
-    assert isinstance(model_input_xr.seasonal_pattern, xarray.DataArray)
-    assert isinstance(model_input_xr.seasonal_errors, xarray.DataArray)
+    assert model_input.seasonal_pattern.shape == (n_locations, MONTHS_PER_YEAR)
+    assert model_input.seasonal_errors.shape == (n_locations, MONTHS_PER_YEAR)
 
     # Check dimensions
-    assert model_input_xr.X.dims == ('location', 'year', 'feature')
-    assert model_input_xr.y.dims == ('location', 'year', 'month')
-    assert model_input_xr.seasonal_pattern.dims == ('location', 'month')
-    assert model_input_xr.seasonal_errors.dims == ('location', 'month')
-
-    # Check that seasonal_pattern and seasonal_errors were squeezed
-    assert model_input_xr.seasonal_pattern.ndim == 2  # Was (L, 1, M), now (L, M)
-    assert model_input_xr.seasonal_errors.ndim == 2
+    assert model_input.X.dims == ('location', 'year', 'feature')
+    assert model_input.y.dims == ('location', 'year', 'month')
+    assert model_input.seasonal_pattern.dims == ('location', 'month')
+    assert model_input.seasonal_errors.dims == ('location', 'month')
 
     # Check coordinates exist
-    assert 'location' in model_input_xr.X.coords
-    assert 'year' in model_input_xr.X.coords
-    assert 'feature' in model_input_xr.X.coords
-    assert 'month' in model_input_xr.y.coords
+    assert 'location' in model_input.X.coords
+    assert 'year' in model_input.X.coords
+    assert 'feature' in model_input.X.coords
+    assert 'month' in model_input.y.coords
 
-    print("✓ to_xarray test passed")
+    # Check coords() method
+    coords = model_input.coords()
+    assert set(coords.keys()) == {'location', 'year', 'month', 'feature'}
+
+    print("✓ FourierInputCreator test passed")
+
+
+# Backward compatibility alias
+ModelInputCreator = FourierInputCreator
