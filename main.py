@@ -1,3 +1,5 @@
+import pydantic
+
 from chap_pymc.curve_parametrizations.fourier_parametrization import FourierHyperparameters
 from chap_pymc.inference_params import InferenceParams
 from chap_pymc.models.seasonal_regression import SeasonalRegression, ModelParams
@@ -10,14 +12,19 @@ app = cyclopts.App()
 def train(train_data: str, model: str, model_config: str, force=False):
     return
 
+class FullConfig(InferenceParams, FourierHyperparameters):
+    ...
+
+class ChapConfig(pydantic.BaseModel):
+    user_options: FullConfig = FullConfig()
+
+
 @app.command()
 def predict(model: str,
             historic_data: str,
             future_data: str,
             out_file: str,
-            model_config: str | None = None,
-            model_type: str = 'fourier',
-            inference_method: str = 'advi'
+            model_config_file: str | None = None,
 ):
     """
     Generate predictions using either seasonal or Fourier regression model.
@@ -30,30 +37,19 @@ def predict(model: str,
         model_config: Optional path to model configuration
         inference_method: Inference method to use ('hmc' or 'advi')
     """
+    model_config = FullConfig()
+    if model_config_file is not None:
+        model_config = ChapConfig.model_validate_json(open(model_config_file).read()).user_options
     training_df = pd.read_csv(historic_data)
 
-    if model_type == 'fourier':
-        # Fourier-based seasonal model
-        if inference_method == 'hmc':
-            inference_params = InferenceParams(method='hmc', chains=4, tune=500, draws=500)
-        else:  # advi
-            inference_params = InferenceParams(method='advi', n_iterations=200_000)
-
-        model = SeasonalFourierRegression(
-            prediction_length=3,
-            lag=3,
-            fourier_hyperparameters=FourierHyperparameters(n_harmonics=3, do_mixture=True),
-            inference_params=inference_params
-        )
-        predictions = model.predict(training_df, n_samples=1000)
-    else:
-        # Traditional seasonal regression model
-        inference_params = InferenceParams(method='advi', n_iterations=200_000)
-        model = SeasonalRegression(
-            inference_params=inference_params,
-        )
-        predictions = model.predict_with_dims(training_df)
-
+    inference_params = InferenceParams(**model_config.model_dump())
+    model = SeasonalFourierRegression(
+        prediction_length=3,
+        lag=3,
+        fourier_hyperparameters=FourierHyperparameters(**model_config.model_dump()),
+        inference_params=inference_params
+    )
+    predictions = model.predict(training_df, n_samples=1000)
     predictions.to_csv(out_file, index=False)
     print(f"Predictions saved to {out_file}")
 

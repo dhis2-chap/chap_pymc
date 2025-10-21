@@ -3,16 +3,16 @@ from pydantic import BaseModel
 
 
 class InferenceParams(BaseModel):
-    method: Literal['hmc', 'advi'] = 'hmc'
+    method: Literal['hmc', 'advi'] = 'advi'
 
     # HMC/NUTS parameters
-    draws: int = 1000
-    tune: int = 1000
+    draws: int = 500
+    tune: int = 500
     chains: int = 4
     target_accept: float = 0.9
 
     # ADVI parameters
-    n_iterations: int = 100000
+    n_iterations: int = 200_000
 
     # Common parameters
     random_seed: int = 42

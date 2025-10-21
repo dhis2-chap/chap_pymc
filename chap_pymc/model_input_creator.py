@@ -77,7 +77,6 @@ class ModelInputCreator:
         logger.info(f"create_model_input: y.shape = {y.shape}")
         logger.info(f"create_model_input: last_seasonal_month = {last_month}")
         logger.info(f"create_model_input: pad_left = {seasonal_data._pad_left}, pad_right = {seasonal_data._pad_right}")
-
         model_input = ModelInput(
             X=X,
             y=y,

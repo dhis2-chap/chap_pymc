@@ -13,7 +13,7 @@ from pytensor.xtensor.type import XTensorVariable, as_xtensor
 from chap_pymc.model_input_creator import  ModelInput
 
 class FourierHyperparameters(pydantic.BaseModel):
-    n_harmonics: int = 2
+    n_harmonics: int = 3
     do_ar_effect: bool = False
     do_mixture: bool = False
     mixture_weight_prior: tuple[float, float] = (0.5, 0.5)  # U-shaped: heavy at 0 and 1, low in middle
