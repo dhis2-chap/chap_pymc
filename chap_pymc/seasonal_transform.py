@@ -125,9 +125,16 @@ class SeasonalTransform:
         )
         return chart
 
-    def get_xarray(self, feature_name, drop_first_year=False) -> xarray.DataArray:
+    def get_xarray(self, feature_name, drop_first_year=False, add_last_year=False) -> xarray.DataArray:
         s = self._df.set_index(['location', 'season_idx', 'seasonal_month'])[feature_name].sort_index()
         data_array = s.to_xarray()
+        if add_last_year:
+            # Add an extra year by copying the last year
+            last_year_idx = data_array.coords['season_idx'].values.max()
+            last_year_data = data_array.sel(season_idx=last_year_idx)
+            new_year_idx = last_year_idx + 1
+            last_year_data = last_year_data.expand_dims({'season_idx': [new_year_idx]})
+            data_array = xarray.concat([data_array, last_year_data], dim='season_idx')
 
         # Add actual month names as coordinates
         month_names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']

@@ -8,9 +8,12 @@ import pymc as pm
 import pytensor.xtensor as px
 import pytensor.tensor as pt
 from pytensor.xtensor.type import XTensorVariable, as_xtensor
+import logging
 
+logger = logging.getLogger(__name__)
 
-from chap_pymc.model_input_creator import  FullModelInput
+from chap_pymc.model_input_creator import FullModelInput, FourierModelInput
+
 
 class FourierHyperparameters(pydantic.BaseModel):
     n_harmonics: int = 3
@@ -58,7 +61,8 @@ class FourierParametrization:
 
         # Important! Using pmd in the observed statement seems to mess up the inference. Use raw values instead.
         # Careful with broadcasting here: sigma is (location,) and mu is (location, year, month)
-        pm.Normal('y_obs', mu=mu.values, sigma=sigma.values[:, None, None], observed=y)
+        pm.Normal('y_obs', mu=mu.values, sigma=sigma.values[:, None, None], observed=y, dims=('location', 'year', 'month'))
+
 
     def _ar_effect(self, y) -> Any:
         L, Y, M = y.shape
@@ -92,7 +96,7 @@ class FourierParametrization:
         result_tensor = pt.tensordot(X.values, beta.values, axes=[[2], [0]])
         return pmd.Deterministic('linear_effect', result_tensor, dims=('location', 'year', 'harmonic'))
 
-    def extract_predictions(self, idata, model_input: FullModelInput) -> xarray.DataArray:
+    def extract_predictions(self, idata, model_input: FourierModelInput) -> xarray.DataArray:
         """
         Extract posterior samples for predicted (unobserved) y values in the last year.
 
@@ -108,31 +112,32 @@ class FourierParametrization:
             posterior samples for the prediction months
         """
         # Get the full y_obs samples from posterior (includes both observed and imputed)
-        y_samples = idata.posterior['y_obs']  # (chain, draw, location, year, month)
+        try:
+            y_samples: xarray.DataArray = idata.posterior['y_obs']  # (chain, draw, location, year, month)
+        except Exception:
+            for key in idata.posterior.data_vars:
+                logger.error("Posterior variable: %s with dims %s", key, idata.posterior[key].dims)
+            raise
 
         # Extract last year
-        last_year_idx = model_input.y.shape[1] - 1 if isinstance(model_input.y, np.ndarray) else len(model_input.y.coords['year']) - 1
-        y_last_year = y_samples.isel(y_obs_dim_1=last_year_idx)  # (chain, draw, location, month)
+        #last_year_idx = model_input.y.shape[1] - 1 if isinstance(model_input.y, np.ndarray) else len(model_input.y.coords['year']) - 1
+        y_last_year = y_samples.isel(year=(-1-model_input.added_last_year))
+        prediction_months_idx = np.arange(model_input.last_month + 1, model_input.n_months())
+        y_predictions = y_last_year.isel(month=prediction_months_idx)
+        if model_input.added_last_year:
+            final_last_year = y_samples.isel(year=-1)
+            y_predictions = xarray.concat((y_predictions, final_last_year), dim='month')
+            logger.info(y_predictions)
 
         # Filter for prediction months (after last_month)
         # last_month is 0-indexed, so months to predict are last_month+1 onwards
-        prediction_months_idx = np.arange(model_input.last_month + 1, model_input.n_months())
-        y_predictions = y_last_year.isel(y_obs_dim_2=prediction_months_idx)
 
-        # Rename dimensions to be more intuitive
-        y_predictions = y_predictions.rename({
-            'y_obs_dim_0': 'location',
-            'y_obs_dim_2': 'month'
-        })
+        if len(prediction_months_idx) < 3:
+            logger.info(f"Only {len(prediction_months_idx)} months to predict, expected 3.")
+            logger.info(f'model_input.last_month: {model_input.last_month}')
+            logger.info(f'y_coords month: {model_input.y.coords}')
+            logger.info(f'y_pred: {y_samples.coords}')
 
-        # Add proper month coordinates if available
-        if hasattr(model_input.y, 'coords') and 'month' in model_input.y.coords:
-            month_labels = model_input.y.coords['month'].values[prediction_months_idx]
-            y_predictions = y_predictions.assign_coords(month=month_labels)
-
-        if hasattr(model_input.y, 'coords') and 'location' in model_input.y.coords:
-            location_labels = model_input.y.coords['location'].values
-            y_predictions = y_predictions.assign_coords(location=location_labels)
 
         return y_predictions
 

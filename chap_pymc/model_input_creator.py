@@ -42,8 +42,9 @@ class FullModelInput(ModelInputBase):
     seasonal_pattern: xarray.DataArray  # (location, month)
     seasonal_errors: xarray.DataArray  # (location, month)
 
+@dataclasses.dataclass
 class FourierModelInput(ModelInputBase):
-    ...
+    added_last_year: bool = False
 
 
 class FourierInputCreator:
@@ -99,23 +100,27 @@ class FourierInputCreator:
             )
         )
         self.seasonal_data = seasonal_data  # Store for backward compatibility
+        last_month = seasonal_data.last_seasonal_month
+        add_last_year = last_month +1+ self._prediction_length > MONTHS_PER_YEAR
 
         # Extract numpy arrays
-        X = self.create_X(seasonal_data)
-        y = seasonal_data.get_xarray('y', drop_first_year=True)
-        last_month = seasonal_data.last_seasonal_month
+        X = self.create_X(seasonal_data, add_last_year=add_last_year)
+        y = seasonal_data.get_xarray('y', drop_first_year=True, add_last_year=add_last_year)
+
 
         logger.info(f"create_model_input: y.shape = {y.shape}")
         logger.info(f"create_model_input: last_seasonal_month = {last_month}")
         return FourierModelInput(
             X=X,
             y=y,
-            last_month=last_month
+            last_month=last_month,
+            added_last_year=add_last_year
         )
 
     def create_X(
         self,
-        seasonal_data: SeasonalTransform
+        seasonal_data: SeasonalTransform,
+        add_last_year: bool = False
     ) -> np.ndarray[tuple[Any, ...], np.dtype[np.float64]]:
         """
         Extract and standardize feature arrays (e.g., lagged temperature).
@@ -127,15 +132,13 @@ class FourierInputCreator:
             Array of shape (locations, years, lag)
         """
         last_month = seasonal_data.last_seasonal_month
-        X = seasonal_data.get_xarray('mean_temperature', drop_first_year=True)
-        X = X.isel(month=slice(last_month-self._lag+1, last_month + 1))
+        X = seasonal_data.get_xarray('mean_temperature', drop_first_year=True, add_last_year=add_last_year)
+        X = X.isel(month=slice(max(last_month-self._lag+1, 0), last_month + 1))
         X = X.rename({'month': 'feature'})
         std = X.std(dim=('year','feature'), skipna=True)
         mean = X.mean(dim=('year','feature'), skipna=True)
         X = (X - mean) / std
         return X
-
-
 
 def test_fourier_input_creator():
     """Test that FourierInputCreator produces xarray DataArrays with correct shapes and coordinates."""
