@@ -126,7 +126,7 @@ class SeasonalFourierRegression:
 
         # Build and fit Fourier model
         logging.info("Building Fourier parametrization model...")
-        with pm.Model(coords=coords) as model:
+        with pm.Model(coords=coords) as pm_model:
             fourier_model = FourierParametrization(
                 self._fourier_hyperparameters
             )
@@ -141,6 +141,7 @@ class SeasonalFourierRegression:
             else:  # 'advi'
                 # ADVI variational inference
                 logging.info("Fitting with ADVI...")
+                pm.model_to_graphviz(pm_model).render("fourier_model_graph", view=True)
                 approx = pm.fit(n=self._inference_params.n_iterations, method='advi')
 
                 # Sample from approximation

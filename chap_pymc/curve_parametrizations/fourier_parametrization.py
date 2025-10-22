@@ -112,6 +112,12 @@ class FourierParametrization:
             posterior samples for the prediction months
         """
         # Get the full y_obs samples from posterior (includes both observed and imputed)
+        nans = model_input.y.isnull()
+        logger.info('NANS: -------')
+        logger.info(
+            nans.any(dim=('location', 'year')))
+        logger.info(nans.any(dim=('location', 'month')))
+
         try:
             y_samples: xarray.DataArray = idata.posterior['y_obs']  # (chain, draw, location, year, month)
         except Exception:
@@ -127,7 +133,7 @@ class FourierParametrization:
         if model_input.added_last_year:
             final_last_year = y_samples.isel(year=-1)
             y_predictions = xarray.concat((y_predictions, final_last_year), dim='month')
-            logger.info(y_predictions)
+            logger.info(y_predictions.coords)
 
         # Filter for prediction months (after last_month)
         # last_month is 0-indexed, so months to predict are last_month+1 onwards

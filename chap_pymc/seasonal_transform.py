@@ -56,19 +56,20 @@ class SeasonalTransform:
         total_month = self._df['season_idx'] * MONTHS_PER_YEAR + self._df['seasonal_month']
         # Store raw (unpadded) month indices
         self._first_seasonal_month_raw = (total_month.min()) % MONTHS_PER_YEAR
-        self._last_seasonal_month_raw = (total_month.max()) % MONTHS_PER_YEAR
+        self.last_seasonal_month_raw = (total_month.max()) % MONTHS_PER_YEAR
 
         # Calculate left padding requirement
         # We need enough historical months for lag features
         # Example: if data ends at month 3 and we need min_prev_months=5 lag features,
         # we have months [0,1,2,3] available, so we need 5-3-1=1 month of padding
         # Formula: pad_left = max(0, min_prev_months - last_month - 1)
-        self._pad_left = max(0, min_prev_months - self._last_seasonal_month_raw - 1) if min_prev_months is not None else 0
-        logger.info(f"min_prev_months: {min_prev_months} last seasonal month: {self._last_seasonal_month_raw}, pad_left: {self._pad_left}")
+        self._pad_left = max(0, min_prev_months - self.last_seasonal_month_raw - 1) if min_prev_months is not None else 0
+        logger.info(f"min_prev_months: {min_prev_months} last seasonal month: {self.last_seasonal_month_raw}, pad_left: {self._pad_left}")
 
         # Effective (padded) month indices - used by downstream code
         # These represent where months appear after left padding is applied
-        self.last_seasonal_month = self._last_seasonal_month_raw + self._pad_left
+        self.last_seasonal_month = self.last_seasonal_month_raw + self._pad_left
+
         self.first_seasonal_month = self._first_seasonal_month_raw + self._pad_left
 
         # Calculate right padding requirement
@@ -132,9 +133,11 @@ class SeasonalTransform:
             # Add an extra year by copying the last year
             last_year_idx = data_array.coords['season_idx'].values.max()
             last_year_data = data_array.sel(season_idx=last_year_idx)
+            last_year_data = xarray.full_like(last_year_data, np.nan)
             new_year_idx = last_year_idx + 1
             last_year_data = last_year_data.expand_dims({'season_idx': [new_year_idx]})
             data_array = xarray.concat([data_array, last_year_data], dim='season_idx')
+
 
         # Add actual month names as coordinates
         month_names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
