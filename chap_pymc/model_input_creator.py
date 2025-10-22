@@ -45,7 +45,7 @@ class FullModelInput(ModelInputBase):
 @dataclasses.dataclass
 class FourierModelInput(ModelInputBase):
     added_last_year: bool = False
-
+    prev_year_end: xarray.DataArray = None  # (location, month)
 
 class FourierInputCreator:
     """
@@ -105,7 +105,9 @@ class FourierInputCreator:
 
         # Extract numpy arrays
         X = self.create_X(seasonal_data, add_last_year=add_last_year)
-        y = seasonal_data.get_xarray('y', drop_first_year=True, add_last_year=add_last_year)
+        y = seasonal_data.get_xarray('y', drop_first_year=False, add_last_year=add_last_year)
+        prev_year_end = y.isel(month=-1, year=slice(None, -1))
+        y = y.isel(year=slice(1, None))  # Drop first year to align with X
         if X.isnull().any():
             assert False,  f"NaNs found in feature array X: {X.where(X.isnull(), drop=True)}"
 
@@ -117,7 +119,8 @@ class FourierInputCreator:
             X=X,
             y=y,
             last_month=last_month,
-            added_last_year=add_last_year
+            added_last_year=add_last_year,
+            prev_year_end=prev_year_end
         )
 
     def create_X(

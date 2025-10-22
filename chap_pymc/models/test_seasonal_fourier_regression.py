@@ -44,7 +44,7 @@ def test_seasonal_fourier_regression_predict(viet_begin_season):
 
 def test_viet_full_year(viet_full_year):
     for i, (viet_instance, t) in enumerate(viet_full_year):
-        if i<11:
+        if i<7:
             continue
         test_seasonal_fourier_regression_advi(viet_instance, t)
 

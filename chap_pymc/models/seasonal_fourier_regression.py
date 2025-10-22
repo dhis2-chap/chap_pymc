@@ -141,7 +141,7 @@ class SeasonalFourierRegression:
             else:  # 'advi'
                 # ADVI variational inference
                 logging.info("Fitting with ADVI...")
-                pm.model_to_graphviz(pm_model).render("fourier_model_graph", view=True)
+                # pm.model_to_graphviz(pm_model).render("fourier_model_graph", view=True)
                 approx = pm.fit(n=self._inference_params.n_iterations, method='advi')
 
                 # Sample from approximation

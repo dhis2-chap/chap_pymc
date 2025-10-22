@@ -56,7 +56,10 @@ class FourierParametrization:
         A = A + A_offset
         ar_effect = self._ar_effect(y) if self.hyper_params.do_ar_effect else 0
         mu = self._calculate_mu(A, n_months=y.shape[-1]) + ar_effect
-        mu = pmd.Deterministic('last_mu', mu * self._mixture_weights(n_years=y.shape[1]))  # Shape: (location, year, month)
+        mu = pmd.Deterministic('last_mu',
+                               mu * self._mixture_weights(n_years=y.shape[1]),
+                               dims=('location', 'year', 'month'))
+                               # Shape: (location, year, month)
         sigma = pmd.HalfNormal('sigma', sigma=1, dims=('location',))
 
         # Important! Using pmd in the observed statement seems to mess up the inference. Use raw values instead.
