@@ -24,7 +24,7 @@ import pytest
 
 from chap_pymc.inference_params import InferenceParams
 from chap_pymc.seasonal_transform import SeasonalTransform, TransformParameters
-from chap_pymc.model_input_creator import ModelInputCreator, ModelInput
+from chap_pymc.model_input_creator import ModelInputCreator, FullModelInput
 
 TESTING=False
 logging.basicConfig(level=logging.INFO)
@@ -153,7 +153,7 @@ class SeasonalRegression:
         else:
             return create_output(training_data, preds)
 
-    def create_model_input(self, training_data: pd.DataFrame) -> ModelInput:
+    def create_model_input(self, training_data: pd.DataFrame) -> FullModelInput:
         creator = ModelInputCreator(
             prediction_length=self._prediction_length,
             lag=self._lag,
@@ -163,12 +163,12 @@ class SeasonalRegression:
         self._seasonal_data = creator.seasonal_data
         return model_input
 
-    def plot_model_input(self, model_input: ModelInput):
+    def plot_model_input(self, model_input: FullModelInput):
         L, Y, M = model_input.y.shape
         for loc in range(L):
             ...
 
-    def define_model(self, model_input: ModelInput) -> int:
+    def define_model(self, model_input: FullModelInput) -> int:
         L, Y, M = model_input.y.shape
         n_outcomes = 1  # mean only
         alpha = pm.Normal('intercept', mu=0, sigma=10, shape=(L, 1, n_outcomes))  # SHould this be global?
@@ -213,7 +213,7 @@ class SeasonalRegression:
             plt.title(f"{lag}")
             plt.show()
 
-    def define_stable_model(self, model_input: ModelInput):
+    def define_stable_model(self, model_input: FullModelInput):
         L, Y, M = model_input.y.shape
         if model_input.X.size:
             X = model_input.X
@@ -262,7 +262,7 @@ class SeasonalRegression:
     def _get_longform_trace(self, idata, param_names: list[str]):
         ...
 
-    def set_explanation_plots(self, training_data: ModelInput, idata, year_idx=None):
+    def set_explanation_plots(self, training_data: FullModelInput, idata, year_idx=None):
         param_names = ['eta', 'sampled_eta', 'samples', 'transformed_samples', 'transformed_pattern', 'epsilon', 'scale']
         median_dict = {name: idata.posterior[name].median(dim=['chain', 'draw']).values for name in param_names}
 
@@ -602,7 +602,7 @@ def test_viet_begin_season(viet_begin_season):
 def model_input():
     L, Y, M = 1, 2, 12
     months = np.array(L * [[np.arange(M)]])
-    return ModelInput(
+    return FullModelInput(
         X=np.random.rand(L, Y, 3),
         y=np.sin(2 * np.pi * months // 12) * np.array([[1], [-1]]),
         seasonal_pattern=np.sin(2 * np.pi * months // 12),

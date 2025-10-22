@@ -125,7 +125,7 @@ class SeasonalTransform:
         )
         return chart
 
-    def get_xarray(self, feature_name) -> xarray.DataArray:
+    def get_xarray(self, feature_name, drop_first_year=False) -> xarray.DataArray:
         s = self._df.set_index(['location', 'season_idx', 'seasonal_month'])[feature_name].sort_index()
         data_array = s.to_xarray()
 
@@ -140,7 +140,11 @@ class SeasonalTransform:
 
         # Assign month names as coordinates
         data_array = data_array.assign_coords(month_name=('seasonal_month', month_labels))
+        # Rename season_idx to year for clarity
+        data_array = data_array.rename({'season_idx': 'year', 'seasonal_month': 'month'})
 
+        if drop_first_year:
+            data_array = data_array.isel(year=slice(1, None))
         return data_array
 
     def _create_and_populate_base_array(self, feature_name: str) -> tuple[np.ndarray, dict[str, int]]:

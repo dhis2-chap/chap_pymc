@@ -10,7 +10,7 @@ import pytensor.tensor as pt
 from pytensor.xtensor.type import XTensorVariable, as_xtensor
 
 
-from chap_pymc.model_input_creator import  ModelInput
+from chap_pymc.model_input_creator import  FullModelInput
 
 class FourierHyperparameters(pydantic.BaseModel):
     n_harmonics: int = 3
@@ -92,7 +92,7 @@ class FourierParametrization:
         result_tensor = pt.tensordot(X.values, beta.values, axes=[[2], [0]])
         return pmd.Deterministic('linear_effect', result_tensor, dims=('location', 'year', 'harmonic'))
 
-    def extract_predictions(self, idata, model_input: ModelInput) -> xarray.DataArray:
+    def extract_predictions(self, idata, model_input: FullModelInput) -> xarray.DataArray:
         """
         Extract posterior samples for predicted (unobserved) y values in the last year.
 
