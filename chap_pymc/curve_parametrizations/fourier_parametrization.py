@@ -48,23 +48,51 @@ class FourierParametrization:
         else:
             return 1.0
 
+    def _get_mv_harmonic(self, dim, coords):
+        pm.modelcontext(None).add_coord(f'{dim}_corr', coords[dim])
+        n = len(coords[dim])
+        sd_dist = pm.Exponential.dist(1.0, size=n)
+        cholesky, *_ = pm.LKJCholeskyCov('cholesky_raw',
+                                         eta=2, n=n, sd_dist=sd_dist,
+                                         compute_corr=True)
+        chol = pmd.as_xtensor(cholesky, dims=(dim, f'{dim}_corr'), name='cholesky')
+        h_mu = pmd.Normal('h_{dim}_mu', mu=0, sigma=1, dims=(dim,))
+        mv = pmd.MvNormal(f'{dim}_mu', mu=h_mu, chol=chol, core_dims=(dim, f'{dim}_corr'), dims=('location', dim))
+        return mv
+        mv = pm.MvNormal(f'{dim}_mu', np.zeros(n), chol=cholesky, shape=(len(coords['location']), n), dims=('location', dim))
+        return pmd.as_xtensor(mv, dims=('location', dim))
+
     def get_model(self, y: xarray.DataArray, A_offset: float | pmd.DimDistribution = 0.0):
-        a_mu = pmd.Normal('a_mu', mu=0, sigma=10, dims=('location', 'harmonic'))
+        missing_mask = y.isnull()
+        a_mu = pmd.Normal('a_mu', mu=0, sigma=1, dims=('location', 'harmonic'))
+        #a_mu = self._get_mv_harmonic('harmonic', pm.modelcontext(None).coords)
         ha_sigma = pmd.HalfNormal('harmonic_a_sigma', sigma=1, dims=('harmonic',))
-        a_sigma = pmd.HalfNormal('a_sigma', sigma=ha_sigma, dims=('harmonic',))
-        A = pmd.Normal('A', mu=a_mu, sigma=a_sigma, dims=('location', 'year', 'harmonic'))
-        A = A + A_offset
+        a_sigma = pmd.HalfNormal('a_sigma', sigma=ha_sigma, dims=('harmonic', 'location'))
+        #A = a_mu + self._get_mv_harmonic('harmonic', pm.modelcontext().coords)
+        A = pmd.Normal('A', mu=0, sigma=a_sigma, dims=('location', 'year', 'harmonic'))+a_mu
+        # pm.LKJCholeskyCov
+        # pmd.MvNormal
+        #A = pm.MvNormal
+        s = A + A_offset
         ar_effect = self._ar_effect(y) if self.hyper_params.do_ar_effect else 0
-        mu = self._calculate_mu(A, n_months=y.shape[-1]) + ar_effect
+        mu = self._calculate_mu(s, n_months=y.shape[-1]) + ar_effect
         mu = pmd.Deterministic('last_mu',
                                mu * self._mixture_weights(n_years=y.shape[1]),
                                dims=('location', 'year', 'month'))
                                # Shape: (location, year, month)
-        sigma = pmd.HalfNormal('sigma', sigma=1, dims=('location',))
+        sigma = pmd.HalfNormal('sigma', sigma=1)
 
         # Important! Using pmd in the observed statement seems to mess up the inference. Use raw values instead.
         # Careful with broadcasting here: sigma is (location,) and mu is (location, year, month)
-        pm.Normal('y_obs', mu=mu.values, sigma=sigma.values[:, None, None], observed=y, dims=('location', 'year', 'month'))
+        mv = missing_mask.values
+        flat_mu = mu.values[~mv]
+        flat_sigma=sigma.values
+        #flat_sigma = pm.math.broadcast_to(sigma.values[:, None, None], mu.values.shape)[~mv]
+        pm.Normal('flat_observed', flat_mu, sigma=flat_sigma, observed=y.values[~mv])
+        pmd.Normal('y_obs', mu=mu, sigma=sigma, dims=('location', 'year', 'month'))
+        #
+
+        #pm.Normal('y_obs', mu=mu.values, sigma=sigma.values[:, None, None], observed=y, dims=('location', 'year', 'month'))
 
 
     def _ar_effect(self, y) -> Any:
@@ -99,7 +127,7 @@ class FourierParametrization:
         result_tensor = pt.tensordot(X.values, beta.values, axes=[[2], [0]])
         return pmd.Deterministic('linear_effect', result_tensor, dims=('location', 'year', 'harmonic'))
 
-    def extract_predictions(self, idata, model_input: FourierModelInput) -> xarray.DataArray:
+    def extract_predictions(self, posterior, model_input: FourierModelInput) -> xarray.DataArray:
         """
         Extract posterior samples for predicted (unobserved) y values in the last year.
 
@@ -121,11 +149,12 @@ class FourierParametrization:
             nans.any(dim=('location', 'year')))
         logger.info(nans.any(dim=('location', 'month')))
 
+
         try:
-            y_samples: xarray.DataArray = idata.posterior['y_obs']  # (chain, draw, location, year, month)
+            y_samples: xarray.DataArray = posterior['y_obs']  # (chain, draw, location, year, month)
         except Exception:
-            for key in idata.posterior.data_vars:
-                logger.error("Posterior variable: %s with dims %s", key, idata.posterior[key].dims)
+            for key in posterior.data_vars:
+                logger.error("Posterior variable: %s with dims %s", key, posterior[key].dims)
             raise
 
         # Extract last year

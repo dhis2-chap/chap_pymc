@@ -110,7 +110,6 @@ class SeasonalFourierRegression:
         creator = FourierInputCreator(
             prediction_length=self._prediction_length,
             lag=self._lag,
-            mask_empty_seasons=self._mask_empty_seasons
         )
         model_input = creator.create_model_input(training_data)
         self.model_input = model_input
@@ -127,17 +126,20 @@ class SeasonalFourierRegression:
         # Build and fit Fourier model
         logging.info("Building Fourier parametrization model...")
         with pm.Model(coords=coords) as pm_model:
+            X = model_input.X
+            y = model_input.y
+
             fourier_model = FourierParametrization(
                 self._fourier_hyperparameters
             )
-            fourier_model.get_regression_model(model_input.X, model_input.y)
+            fourier_model.get_regression_model(X, y)
 
             # Choose inference method based on inference_params.method
             if self._inference_params.method == 'hmc':
                 # HMC/NUTS sampling
                 logging.info("Sampling from posterior using HMC/NUTS...")
                 idata = pm.sample(**self._inference_params.model_dump(exclude={'method', 'n_iterations'}))
-                inference_result = idata
+
             else:  # 'advi'
                 # ADVI variational inference
                 logging.info("Fitting with ADVI...")
@@ -147,12 +149,14 @@ class SeasonalFourierRegression:
                 # Sample from approximation
                 logging.info("Sampling from approximation...")
                 idata = approx.sample(n_samples)
-                inference_result = approx
+            posterior_predictive = pm.sample_posterior_predictive(idata, var_names=['y_obs', 'A']).posterior_predictive
 
         # Extract predictions for unobserved months in last year
         logging.info("Extracting predictions...")
-        predictions_xr = fourier_model.extract_predictions(idata, model_input)
-
+        # posterior = idata.posterior
+        posterior = posterior_predictive
+        predictions_xr = fourier_model.extract_predictions(posterior, model_input)
+        predictions_xr = predictions_xr*model_input.y_std +model_input.y_mean
         # Select only the first prediction_length months
         predictions_xr = predictions_xr.isel(month=slice(0, self._prediction_length))
 

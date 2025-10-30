@@ -10,7 +10,6 @@ logger = logging.getLogger(__name__)
 def df() -> pd.DataFrame:
     p = Path(__file__).parent.parent/ 'test_data' / 'training_data.csv'
     df = pd.read_csv(p)
-    df = pd.concat([group.interpolate() for _, group in df.groupby('location')]).reset_index()
     return df
 
 @pytest.fixture

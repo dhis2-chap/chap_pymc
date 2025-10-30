@@ -41,7 +41,7 @@ def y(coords):
 
 @pytest.fixture()
 def viet_model_input(viet_begin_season):
-    creator = ModelInputCreator(prediction_length=3, lag=3, mask_empty_seasons=False)
+    creator = ModelInputCreator(prediction_length=3, lag=3)
     model_input = creator.create_model_input(viet_begin_season)
     return model_input
 
@@ -111,9 +111,6 @@ def nepal_model_input(nepal_data):
     model_input = creator.create_model_input(nepal_data)
     return creator.to_xarray(model_input)
 
-
-
-
 def test_nepal_regresion(nepal_data):
     fourier_regression = SeasonalFourierRegression(
         prediction_length=3,
@@ -134,7 +131,7 @@ def test_full_vietnam_regression(viet_full_year):
     for i, (viet_instance, t) in enumerate(viet_full_year):
         if i<7:
             continue
-        creator = ModelInputCreator(prediction_length=3, lag=3, mask_empty_seasons=False)
+        creator = ModelInputCreator(prediction_length=3, lag=3)
         model_input = creator.create_model_input(viet_instance)
         test_vietnam_regression(model_input, viet_idata_path=f'viet_{i}.nc', i=i)
 
@@ -145,21 +142,29 @@ def test_vietnam_regression(viet_model_input,  viet_idata_path=None, i=0):
         m = FourierParametrization(FourierHyperparameters(n_harmonics=n_harmonics))
         m.get_regression_model(viet_model_input.X, viet_model_input.y)
 
-        #pm.model_to_graphviz(model).render('fourier_graph', format='png', view=True)
-        approx = pm.fit(n=100000, method='advi')
-        # Sample from approximation
-        idata = approx.sample(1000)
+        pm.model_to_graphviz(model).render('fourier_graph', format='png', view=True)
+        if False:
+            approx = pm.fit(n=100000, method='advi')
+
+            # Sample from approximation
+            idata = approx.sample(1000)
+        else:
+            idata = pm.sample(draws=500, tune=500, progressbar=True, return_inferencedata=True)
+        posterior = pm.sample_posterior_predictive(idata, var_names=['y_obs']).posterior_predictive
         #idata = pm.sample(draws=500, tune=500, chains=4, progressbar=True, return_inferencedata=True)
-        #az.plot_posterior(idata, var_names=['slope'])
-        az.plot_posterior(idata, var_names=['a_mu'])
+#az.plot_posterior(idata, var_names=['slope'])
+        az.plot_posterior(idata, var_names=['sigma'])
         plt.show()
     # Save idata for inspection
     if viet_idata_path:
         idata.to_netcdf(viet_idata_path)
         viet_model_input.y.to_netcdf(f'y_{viet_idata_path}')
-    idata.posterior['A'].isel(harmonic=0).median(dim=['chain', 'draw']).plot()
+        viet_model_input.X.to_netcdf(f'X_{viet_idata_path}')
+
+    #posterior = idata.posterior
+    #posterior['A'].isel(harmonic=0).median(dim=['chain', 'draw']).plot()
     # Extract posterior predictions
-    mu_posterior = idata.posterior['mu']  # (chain, draw, location, year, month)
+    mu_posterior = posterior['y_obs']  # (chain, draw, location, year, month)
     mu_mean = mu_posterior.mean(dim=['chain', 'draw'])  # (location, year, month)
     mu_lower = mu_posterior.quantile(0.025, dim=['chain', 'draw'])
     mu_upper = mu_posterior.quantile(0.975, dim=['chain', 'draw'])
@@ -206,7 +211,7 @@ def test_extract_predictions(viet_idata_path, viet_model_input):
     model = FourierParametrization(FourierHyperparameters(n_harmonics=3))
 
     # Extract predictions
-    predictions = model.extract_predictions(idata, viet_model_input)
+    predictions = model.extract_predictions(idata.posterior, viet_model_input)
 
     print(f"\nPredictions shape: {predictions.shape}")
     print(f"Predictions dims: {predictions.dims}")
@@ -248,17 +253,18 @@ def test_vietnam_fourier_fit(vietnam_y_xarray):
         FourierParametrization(FourierHyperparameters(n_harmonics=n_harmonics)).get_model(vietnam_y_xarray)
         pm.model_to_graphviz(model).render('fourier_graph', format='png', view=True)
         idata = pm.sample(draws=500, tune=500, progressbar=True, return_inferencedata=True)
-
+        posterior = pm.sample_posterior_predictive(idata, var_names=['y_obs', 'A']).posterior_predictive
 
 
     # Extract posterior predictions
-    mu_posterior = idata.posterior['mu']  # (chain, draw, location, year, month)
+    mu_posterior = posterior['mu']  # (chain, draw, location, year, month)
     mu_mean = mu_posterior.mean(dim=['chain', 'draw'])  # (location, year, month)
     mu_lower = mu_posterior.quantile(0.025, dim=['chain', 'draw'])
     mu_upper = mu_posterior.quantile(0.975, dim=['chain', 'draw'])
 
     # Create plot using plotting function
     plot_vietnam_faceted_predictions(vietnam_y_xarray, mu_mean, mu_lower, mu_upper, coords)
+
 
 
 def test_vietnam_parameter_correlations(viet_model_input):

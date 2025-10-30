@@ -25,7 +25,6 @@ def create_data_arrays(df: pd.DataFrame, horizon=3):
     all_stds = []
     full_year_data = []
     for location, group in df.groupby('location'):
-        group['log1p'] = group['log1p'].interpolate()
         cutoff_month_index = np.flatnonzero(df['month'] == min_month)[0]
         extra_offset = (len(group)-cutoff_month_index+horizon)%12
         ds = group['log1p'].values

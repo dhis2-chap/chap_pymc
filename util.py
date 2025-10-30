@@ -25,7 +25,7 @@ def to_tensor_panels(pnl, time_idx, locs, date_col, loc_col, col):
         M[:, j] = pivot[loc].to_numpy()
     return M
 
-def safe_impute(M):
+def _safe_impute(M):
     df = pd.DataFrame(M)
     df = df.interpolate(limit_direction="both").ffill().bfill()
     return df.to_numpy()

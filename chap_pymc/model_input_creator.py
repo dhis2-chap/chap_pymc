@@ -46,6 +46,8 @@ class FullModelInput(ModelInputBase):
 class FourierModelInput(ModelInputBase):
     added_last_year: bool = False
     prev_year_end: xarray.DataArray = None  # (location, month)
+    y_mean: xarray.DataArray = None
+    y_std: xarray.DataArray = None
 
 class FourierInputCreator:
     """
@@ -63,7 +65,6 @@ class FourierInputCreator:
         self,
         prediction_length: int = 3,
         lag: int = 3,
-        mask_empty_seasons: bool = False
     ):
         """
         Initialize FourierInputCreator.
@@ -75,7 +76,6 @@ class FourierInputCreator:
         """
         self._prediction_length = prediction_length
         self._lag = lag
-        self._mask_empty_seasons = mask_empty_seasons
         self.seasonal_data: SeasonalTransform | None = None  # For backward compatibility
 
     def create_model_input(self, training_data: pd.DataFrame) -> FourierModelInput:
@@ -89,7 +89,7 @@ class FourierInputCreator:
             ModelInput with xarray DataArrays containing coordinate information
         """
         training_data = training_data.copy()
-        training_data['y'] = np.log1p(training_data['disease_cases']).interpolate()
+        training_data['y'] = np.log1p(training_data['disease_cases'])
 
         # Transform to seasonal format
         seasonal_data = SeasonalTransform(
@@ -106,6 +106,10 @@ class FourierInputCreator:
         # Extract numpy arrays
         X = self.create_X(seasonal_data, add_last_year=add_last_year)
         y = seasonal_data.get_xarray('y', drop_first_year=False, add_last_year=add_last_year)
+        y_mean = y.mean(dim=('year', 'month'))
+        y_std = y.std(dim=('year', 'month'))
+        y = (y-y_mean)/y_std
+
         prev_year_end = y.isel(month=-1, year=slice(None, -1))
         y = y.isel(year=slice(1, None))  # Drop first year to align with X
         if X.isnull().any():
@@ -120,7 +124,9 @@ class FourierInputCreator:
             y=y,
             last_month=last_month,
             added_last_year=add_last_year,
-            prev_year_end=prev_year_end
+            prev_year_end=prev_year_end,
+            y_mean=y_mean,
+            y_std=y_std
         )
 
     def create_X(
@@ -174,7 +180,7 @@ def test_fourier_input_creator():
     df = pd.DataFrame(data)
 
     # Create model input
-    creator = FourierInputCreator(prediction_length=3, lag=3, mask_empty_seasons=False)
+    creator = FourierInputCreator(prediction_length=3, lag=3)
     model_input = creator.create_model_input(df)
 
     # Check that arrays are xarray DataArrays
