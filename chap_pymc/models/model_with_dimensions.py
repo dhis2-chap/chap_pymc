@@ -1,12 +1,12 @@
 import dataclasses
-from typing import Literal, Any
+from typing import Any, Literal
 
 import numpy as np
 import pydantic
-import xarray as xr
 import pymc as pm
 import pymc.dims as pmd
 import pytest
+import xarray as xr
 from pytensor.xtensor import as_xtensor
 
 

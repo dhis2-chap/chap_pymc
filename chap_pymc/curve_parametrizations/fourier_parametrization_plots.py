@@ -1,8 +1,9 @@
 """Plotting functions for Fourier parametrization visualizations"""
+import altair as alt
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
-import altair as alt
+
 from chap_pymc.correlation_plots import CorrelationBarPlot
 
 

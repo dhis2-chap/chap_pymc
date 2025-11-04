@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 from scipy.optimize import minimize
 
+
 @dataclasses.dataclass
 class OutbreakParams:
     loc: np.ndarray
@@ -92,7 +93,7 @@ def data():
         [2.0, 2.0, 2.0],  # scales for location 2
     ])
     eta = patterns[:, np.newaxis, :]*scales[..., np.newaxis] + locs[..., np.newaxis]
-    noise = np.random.rand((n_loc*n_years*n_months)).reshape((n_loc, n_years, n_months))
+    noise = np.random.rand(n_loc*n_years*n_months).reshape((n_loc, n_years, n_months))
     return eta+noise
 
 def test_loc_scale_pattern_finder(data):

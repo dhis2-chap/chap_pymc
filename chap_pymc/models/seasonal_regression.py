@@ -1,21 +1,17 @@
 import dataclasses
 import logging
-import pydantic
-
-from typing import Any, Literal
 
 import cyclopts
 import numpy as np
 import pandas as pd
-import arviz as az
 import pymc as pm
-import xarray
 
-from chap_pymc.models.model_with_dimensions import DimensionalModel, ModelParams as ModelDefParams
+from chap_pymc.models.model_with_dimensions import DimensionalModel
+from chap_pymc.models.model_with_dimensions import ModelParams as ModelDefParams
 
 try:
-    import matplotlib.pyplot as plt
     import altair as alt
+    import matplotlib.pyplot as plt
     # alt.data_transformers.enable("vegafusion")
 except ImportError:
     plt = None
@@ -23,8 +19,8 @@ except ImportError:
 import pytest
 
 from chap_pymc.inference_params import InferenceParams
-from chap_pymc.seasonal_transform import SeasonalTransform, TransformParameters
-from chap_pymc.model_input_creator import ModelInputCreator, FullModelInput
+from chap_pymc.model_input_creator import FullModelInput, ModelInputCreator
+from chap_pymc.seasonal_transform import SeasonalTransform
 
 TESTING=False
 logging.basicConfig(level=logging.INFO)
@@ -452,9 +448,9 @@ class SeasonalRegression:
             pred = med[location, -1]
             u = upper[location, -1]
             l = lower[location, -1]
-            plt.plot(pred, label=f'med', color='blue')
-            plt.plot(u, label=f'upper', color= 'blue')
-            plt.plot(l, label=f'lower', color='blue')
+            plt.plot(pred, label='med', color='blue')
+            plt.plot(u, label='upper', color= 'blue')
+            plt.plot(l, label='lower', color='blue')
             plt.plot(pre_noise[location, -1], label=f'Prenoise {location+1}', color='green')
             plt.plot(model_input.seasonal_pattern[location,0])
             plt.plot(model_input.y[location, -1], color='red')

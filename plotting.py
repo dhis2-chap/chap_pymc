@@ -1,10 +1,10 @@
 import pickle
 from pathlib import Path
 
+import arviz as az
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
-import arviz as az
 import pytest
 
 
@@ -583,9 +583,9 @@ def plot_horizons(idata):
     for i in range(n_locations):
         for h in range(0, 1):
             median = posterior[f'log_mu_past_{h}'].median(dim=['chain', 'draw']).values[..., i]
-            wo = posterior[f'without_effect'].median(dim=['chain', 'draw']).values[..., i]
+            wo = posterior['without_effect'].median(dim=['chain', 'draw']).values[..., i]
             useq = (
-                posterior[f"u_rw"]
+                posterior["u_rw"]
                 .median(dim=["chain", "draw"])
                 .values[..., i]
             )

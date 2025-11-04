@@ -1,10 +1,11 @@
-import pymc as pm
+import arviz as az
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
-import arviz as az
+import pymc as pm
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
+
 from .season_plot import SeasonCorrelationPlot
 
 
@@ -149,12 +150,12 @@ def evaluate_model_performance(trace, X_train, X_test, y_train, y_test, loc_idx_
 
     # Print results
     print("\n=== Model Performance ===")
-    print(f"Training Set:")
+    print("Training Set:")
     print(f"  MSE: {train_metrics['mse']:.4f}")
     print(f"  MAE: {train_metrics['mae']:.4f}")
     print(f"  R²: {train_metrics['r2']:.4f}")
 
-    print(f"\nTest Set:")
+    print("\nTest Set:")
     print(f"  MSE: {test_metrics['mse']:.4f}")
     print(f"  MAE: {test_metrics['mae']:.4f}")
     print(f"  R²: {test_metrics['r2']:.4f}")

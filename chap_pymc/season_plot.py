@@ -1,10 +1,12 @@
+from pathlib import Path
+
+import altair as alt
 import numpy as np
 import pandas as pd
-import altair as alt
 import pytest
-from chap_pymc.dataset_plots import DatasetPlot
+
 from chap_pymc.correlation_plots import CorrelationBarPlot
-from pathlib import Path
+from chap_pymc.dataset_plots import DatasetPlot
 
 alt.renderers.default = 'browser'
 

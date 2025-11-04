@@ -1,7 +1,8 @@
 """Generic correlation plotting classes using Altair"""
 from abc import ABC, abstractmethod
-import pandas as pd
+
 import altair as alt
+import pandas as pd
 
 
 class CorrelationBarPlot(ABC):

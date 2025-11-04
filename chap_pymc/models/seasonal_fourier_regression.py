@@ -2,17 +2,17 @@
 SeasonalFourierRegression - Fourier-based seasonal disease forecasting model
 """
 import logging
-import pandas as pd
-import numpy as np
-import pymc as pm
-import arviz as az
 
+import numpy as np
+import pandas as pd
+import pymc as pm
+
+from chap_pymc.curve_parametrizations.fourier_parametrization import (
+    FourierHyperparameters,
+    FourierParametrization,
+)
 from chap_pymc.inference_params import InferenceParams
 from chap_pymc.model_input_creator import FourierInputCreator
-from chap_pymc.curve_parametrizations.fourier_parametrization import (
-    FourierParametrization,
-    FourierHyperparameters
-)
 
 logging.basicConfig(level=logging.INFO)
 
@@ -119,7 +119,7 @@ class SeasonalFourierRegression:
             'harmonic': np.arange(0, self._n_harmonics + 1)  # Include baseline (h=0)
         }
         self.stored_coords = coords  # For potential inspection later
-        logging.info(f"PyMC coords being passed:")
+        logging.info("PyMC coords being passed:")
         for k, v in coords.items():
             logging.info(f"  {k}: len={len(v) if hasattr(v, '__len__') else 'N/A'}, values={v if len(v) < 20 else f'{list(v[:5])}...{list(v[-2:])}'}")
 

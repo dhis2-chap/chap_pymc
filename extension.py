@@ -2,12 +2,15 @@ import uuid
 
 import numpy as np
 import pandas as pd
-
 import pymc as pm
 from pytensor import tensor as pt
 
-from util import  to_tensor_panels, safe_impute, extract_month_indices, complete_monthly_panel
-
+from util import (
+    complete_monthly_panel,
+    extract_month_indices,
+    safe_impute,
+    to_tensor_panels,
+)
 
 
 def continue_rw_process(idata, T_orig, T_extended, sigma_rw_val, L):

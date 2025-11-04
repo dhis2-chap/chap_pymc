@@ -1,9 +1,10 @@
 from pathlib import Path
-import pandas as pd
+
+import cyclopts
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 import pymc as pm
-import cyclopts
 import pytest
 from pandas import DataFrame
 

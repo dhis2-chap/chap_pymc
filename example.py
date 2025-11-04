@@ -8,19 +8,19 @@
 #   python example.py plot model.pkl training_data.csv historic_data.csv predictions.csv config.yaml output.png
 #   python example.py plot-components model.pkl config.yaml output_dir
 
-import uuid
 import pickle
+import uuid
 
-import pytest
-import yaml
+import arviz as az
+import cyclopts
 import numpy as np
 import pandas as pd
-from sklearn.preprocessing import StandardScaler
 import pydantic
 import pymc as pm
 import pytensor.tensor as pt
-import cyclopts
-import arviz as az
+import pytest
+import yaml
+from sklearn.preprocessing import StandardScaler
 
 from extension import continue_rw_process, prepare_extended_data
 from plotting import (
@@ -28,7 +28,13 @@ from plotting import (
     create_parameter_plot,
     plot_model_components,
 )
-from util import  to_tensor_panels, safe_impute, extract_month_indices, complete_monthly_panel
+from util import (
+    complete_monthly_panel,
+    extract_month_indices,
+    safe_impute,
+    to_tensor_panels,
+)
+
 
 class Config(pydantic.BaseModel):
     covariate_names: list[str] = ['rainfall', 'mean_temperature']
@@ -79,7 +85,7 @@ def prepare_data(args: Config, raw):
     if np.isnan(y).any():
         y = safe_impute(y)
     y = np.clip(y, 0, None).astype(int)
-    
+
     # Population (T, L) for offset - only if available
     if has_population:
         pop = to_tensor_panels(panel, time_idx, locs, 'time_period', 'location', 'population')
@@ -99,10 +105,10 @@ def prepare_data(args: Config, raw):
     P = X.shape[2]
     scaler = StandardScaler().fit(X.reshape(T*L, P))
     X_std = scaler.transform(X.reshape(T*L, P)).reshape(T, L, P)
-    
+
     # Extract month indices for seasonal effects
     month_indices = extract_month_indices(time_idx) if args.use_seasonal_effects else None
-    
+
     return {
         'y': y,
         'X_std': X_std,
@@ -124,26 +130,26 @@ def format_predictions(ppc, data_dict, args):
     time_idx = data_dict['time_idx']
     locs = data_dict['locs']
     H = data_dict['H']
-    
+
     # Generate future dates
     fut_dates = pd.date_range(time_idx[-1] + pd.tseries.frequencies.to_offset(args.freq),
                               periods=H, freq=args.freq)
-    
+
     # Find the y_fut variable (it has a unique ID suffix)
     y_fut_var = None
     for var_name in ppc.prior.data_vars:
         if var_name.startswith('y_fut_'):
             y_fut_var = var_name
             break
-    
+
     if y_fut_var is None:
         raise ValueError("Could not find y_fut variable in predictions")
-    
+
     fut_Y = ppc.prior[y_fut_var]  # (chain, draws, H, L)
-    # Flatten chain and draws dimensions  
+    # Flatten chain and draws dimensions
     fut_Y = fut_Y.stack(sample=('chain', 'draw'))  # (sample, H, L)
     fut_dates = [str(p)[:7] for p in fut_dates]
-    
+
     rows = [
         [fut_dates[h], locs[l]] + list(fut_Y[h, l, :].values.tolist())
         for h in range(H)
@@ -160,30 +166,30 @@ def format_predictions_from_historic_end(ppc, extended_data_dict, args: Config):
     extended_time_idx = extended_data_dict['extended_time_idx']
     locs = extended_data_dict['locs']
     H = extended_data_dict['H']
-    
+
     # Generate future dates starting from end of historic data
     fut_dates = pd.date_range(
         extended_time_idx[-1] + pd.tseries.frequencies.to_offset(args.freq),
         periods=H, freq=args.freq
     )
-    
+
     # Find the y_fut variable (it has a unique ID suffix)
     y_fut_var = None
     for var_name in ppc.prior.data_vars:
         if var_name.startswith('y_fut'):
             y_fut_var = var_name
             break
-    
+
     if y_fut_var is None:
         raise ValueError("Could not find y_fut variable in predictions")
-    
+
     fut_Y = ppc.prior[y_fut_var]  # (chain, draws, H, L)
     # Flatten chain and draws dimensions
     print(fut_Y.shape)
     fut_Y = fut_Y.stack(sample=('chain', 'draw'))  # (sample, H, L)
     print(fut_Y.shape)
     fut_dates = [str(p)[:7] for p in fut_dates]
-    
+
     rows = [
         [fut_dates[h], locs[l]] + list(fut_Y[..., h, l, :].values.ravel().tolist())
         for h in range(H)
@@ -194,7 +200,7 @@ def format_predictions_from_historic_end(ppc, extended_data_dict, args: Config):
     assert len(sample_names) == args.draws*args.chains, f"Sample count mismatch: expected {args.draws*args.chains}, got {len(sample_names)}"
     col_names = ['time_period', 'location'] + sample_names
     out_df = pd.DataFrame(rows, columns=col_names)
-    
+
     return out_df
 
 def on_train(training_data: pd.DataFrame, args: Config= Config()) -> tuple:
@@ -361,7 +367,7 @@ def new_predict(model_and_data, args: Config):
         # Get parameter values from posterior
 
         mu_future = pt.exp(log_mu_future)
-        y_fut = pm.NegativeBinomial(f"y_fut",
+        y_fut = pm.NegativeBinomial("y_fut",
                                     mu=mu_future,
                                     alpha=alpha)
 
@@ -386,15 +392,15 @@ def on_predict(model_and_data: tuple, historic_data: pd.DataFrame, args: Config=
 
     # Prepare extended data that includes historic observations
 
-    
+
     # Get dimensions
     T_orig, L, P, H = data_dict["T"], data_dict["L"], data_dict["P"], data_dict["H"]
     T_extended = extended_data_dict["T_extended"]
-    
+
     # Prepare future covariates by holding last value from historic data
     X_extended = extended_data_dict["X_extended"]
     log_pop_offset_extended = extended_data_dict["log_pop_offset_extended"]
-    
+
     if P > 0:
         X_future = np.tile(X_extended[-1:, :, :], (H, 1, 1))  # hold last from historic data
         Xfut_const = X_future
@@ -434,7 +440,7 @@ def on_predict(model_and_data: tuple, historic_data: pd.DataFrame, args: Config=
             future_start_date = last_date + pd.tseries.frequencies.to_offset(args.freq)
             future_dates = pd.date_range(future_start_date, periods=H, freq=args.freq)
             future_month_indices = extract_month_indices(future_dates)
-            
+
             # Map seasonal effects to future periods
             seasonal_effects_fut = total_seasonal[future_month_indices, :]  # (H,)
 
@@ -442,7 +448,7 @@ def on_predict(model_and_data: tuple, historic_data: pd.DataFrame, args: Config=
         # Get location parameters from posterior
         location_effects_fut = idata.posterior["location_raw"].mean(dim=["chain", "draw"]).values[None, :]
         #location_val = location_val - np.mean(location_val)  # Apply zero-sum constraint
-            
+
         # Location effects are constant across time, so broadcast to (H, L)
         # location_effects_fut = pt.as_tensor_variable(np.tile(location_val[None, :], (H, 1)))
 
@@ -477,7 +483,7 @@ def on_predict(model_and_data: tuple, historic_data: pd.DataFrame, args: Config=
 
     # Format predictions starting from end of historic data
     result_df = format_predictions_from_historic_end(ppc, extended_data_dict, args)
-    
+
     return result_df
 
 
@@ -493,30 +499,30 @@ def train(train_data: str, model: str, model_config: str, force=False):
     config = load_config(model_config)
     df = pd.read_csv(train_data)
     model_and_data = on_train(df, config)
-    
+
     # Extract components that can be serialized
     model_dat, idata, data_dict, args = model_and_data
-    
+
     # Create base filename without extension
     base_name = model.rsplit('.', 1)[0] if '.' in model else model
-    
+
     # Save inference data using arviz (NetCDF format)
     idata_filename = f"{base_name}_idata.nc"
 
     idata.to_netcdf(idata_filename)
-    
+
     # Save data dictionary and config using pickle
     data_filename = f"{base_name}_data.pkl"
     with open(data_filename, 'wb') as f:
         pickle.dump((data_dict, args), f)
-    
-    print(f"Model saved to:")
+
+    print("Model saved to:")
     print(f"  Inference data: {idata_filename}")
     print(f"  Data & config: {data_filename}")
 
 
 def load_config(config_filename):
-    with open(config_filename, "r") as f:
+    with open(config_filename) as f:
         config_dict = yaml.safe_load(f)
     return Config(**config_dict)
 
@@ -554,25 +560,25 @@ def predict(model: str,
     out_df = on_predict(model_and_data, historic_data, args)
     out_df = out_df.sort_values(by=['location', 'time_period'])
     out_df.to_csv(out_file, index=False)
-    
+
     print(f"Predictions saved to: {out_file}")
 
 
 @app.command()
-def plot(model: str, 
-         train_data: str, 
+def plot(model: str,
+         train_data: str,
          historic_data: str,
          predictions: str,
          model_config: str,
          output: str = "model_visualization.png",
          plot_params: bool = False):
     """Create visualization of model training data, historic data, and predictions."""
-    
+
     config = load_config(model_config)
-    
+
     # Create main visualization
     create_model_visualization(train_data, historic_data, predictions, output, config)
-    
+
     # Optionally create parameter plots
     if plot_params:
         param_output = output.replace('.png', '_parameters.png')

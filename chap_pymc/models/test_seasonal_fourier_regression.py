@@ -1,11 +1,11 @@
 """Tests for SeasonalFourierRegression"""
-import pytest
 import pandas as pd
-import numpy as np
 
-from chap_pymc.curve_parametrizations.fourier_parametrization import FourierHyperparameters
-from chap_pymc.models.seasonal_fourier_regression import SeasonalFourierRegression
+from chap_pymc.curve_parametrizations.fourier_parametrization import (
+    FourierHyperparameters,
+)
 from chap_pymc.inference_params import InferenceParams
+from chap_pymc.models.seasonal_fourier_regression import SeasonalFourierRegression
 
 
 def test_seasonal_fourier_regression_predict(viet_begin_season):
@@ -39,7 +39,7 @@ def test_seasonal_fourier_regression_predict(viet_begin_season):
     print(f"\nPredictions shape: {predictions.shape}")
     print(f"Locations: {predictions['location'].unique()}")
     print(f"Time periods: {predictions['time_period'].unique()}")
-    print(f"\nSample predictions for first location:")
+    print("\nSample predictions for first location:")
     print(predictions[predictions['location'] == predictions['location'].iloc[0]].head())
 
 def test_viet_full_year(viet_full_year):

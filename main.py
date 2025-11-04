@@ -1,11 +1,13 @@
-import pydantic
-
-from chap_pymc.curve_parametrizations.fourier_parametrization import FourierHyperparameters
-from chap_pymc.inference_params import InferenceParams
-from chap_pymc.models.seasonal_regression import SeasonalRegression, ModelParams
-from chap_pymc.models.seasonal_fourier_regression import SeasonalFourierRegression
 import cyclopts
 import pandas as pd
+import pydantic
+
+from chap_pymc.curve_parametrizations.fourier_parametrization import (
+    FourierHyperparameters,
+)
+from chap_pymc.inference_params import InferenceParams
+from chap_pymc.models.seasonal_fourier_regression import SeasonalFourierRegression
+
 app = cyclopts.App()
 #
 @app.command()

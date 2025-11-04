@@ -1,13 +1,12 @@
 import dataclasses
+import logging
 from typing import Any
 
 import numpy as np
 import pandas as pd
-import pytest
 import xarray
 
 from chap_pymc.seasonal_transform import SeasonalTransform, TransformParameters
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +44,7 @@ class FullModelInput(ModelInputBase):
 @dataclasses.dataclass
 class FourierModelInput(ModelInputBase):
     added_last_year: bool = False
-    prev_year_end: xarray.DataArray = None  # (location, month)
+    prev_year_end: xarray.DataArray = None  # (location, year)
     y_mean: xarray.DataArray = None
     y_std: xarray.DataArray = None
 
@@ -157,13 +156,14 @@ class FourierInputCreator:
             X = X_new
         return X
 
+
 def test_fourier_input_creator():
     """Test that FourierInputCreator produces xarray DataArrays with correct shapes and coordinates."""
     # Create synthetic data
     locations = ['LocationA', 'LocationB']
     n_months = 36  # 3 years of data
     dates = pd.date_range('2020-01', periods=n_months, freq='MS')
-
+    time_periods = pd.date_range('2020-01', periods=n_months, freq='MS')
     data = []
     for loc in locations:
         for i, date in enumerate(dates):

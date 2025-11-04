@@ -1,10 +1,9 @@
+import logging
 from typing import Literal
 
 #import altair
 import numpy as np
 import pandas as pd
-import logging
-
 import pydantic
 import xarray
 

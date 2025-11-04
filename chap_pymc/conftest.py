@@ -1,10 +1,12 @@
-from pathlib import Path
 import logging
+from pathlib import Path
+
+import chap_core
 import pandas as pd
 import pytest
-from chap_core.spatio_temporal_data.temporal_dataclass import DataSet
-import chap_core
 from chap_core.assessment.dataset_splitting import train_test_generator
+from chap_core.spatio_temporal_data.temporal_dataclass import DataSet
+
 logger = logging.getLogger(__name__)
 @pytest.fixture
 def df() -> pd.DataFrame:

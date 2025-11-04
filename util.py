@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 
+
 def complete_monthly_panel(df, date_col, loc_col, cols, freq="MS"):
     df = df.copy()
     df[date_col] = pd.to_datetime(df[date_col])

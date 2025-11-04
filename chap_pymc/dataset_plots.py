@@ -1,11 +1,9 @@
-import pathlib
 from abc import ABC, abstractmethod
-from pathlib import Path
+
 import altair as alt
 import numpy as np
 import pandas as pd
-import pytest
-from altair import FacetChart, HConcatChart
+from altair import HConcatChart
 
 alt.data_transformers.enable('vegafusion')
 alt.renderers.enable('browser')
@@ -52,7 +50,7 @@ class StandardizedFeaturePlot(DatasetPlot):
     It includes a log1p transformation of the disease incidence rate (disease_cases/population)
     This shows how different features correlate over time and location.
     '''
-    
+
     def __init__(self, df: pd.DataFrame, selected_features=None):
         super().__init__(df)
         self.selected_features = selected_features
@@ -69,7 +67,7 @@ class StandardizedFeaturePlot(DatasetPlot):
         df = self._df.copy()
         colnames = list(self._get_colnames())
         base_df = df[['time_period', 'location']].copy()
-        
+
         # Add log1p of disease incidence rate if population column exists
         if 'population' in df.columns:
             df['log1p'] = np.log1p(df['disease_cases'] / df['population'])
@@ -78,7 +76,7 @@ class StandardizedFeaturePlot(DatasetPlot):
             # Fallback to just log1p of disease cases
             df['log1p'] = np.log1p(df['disease_cases'])
             colnames.append('log1p')
-        
+
         dfs = []
         for colname in colnames:
             if colname in df.columns:
@@ -86,7 +84,7 @@ class StandardizedFeaturePlot(DatasetPlot):
                 new_df['value'] = self._standardize(df[colname].values)
                 new_df['feature'] = colname
                 dfs.append(new_df)
-        
+
         if dfs:
             return pd.concat(dfs, ignore_index=True)
         else:
@@ -97,11 +95,11 @@ class StandardizedFeaturePlot(DatasetPlot):
 
     def plot(self) -> HConcatChart:
         data = self.data()
-        
+
         # Filter data based on selected features if specified
         if self.selected_features is not None:
             data = data[data['feature'].isin(self.selected_features)]
-        
+
         # Convert time_period to proper datetime format
         data['date'] = pd.to_datetime(data['time_period'] + '-01')
 
@@ -165,7 +163,7 @@ def test_standardized_feature_plot(df: pd.DataFrame):
     assert 'feature' in data.columns
     assert 'location' in data.columns
     assert 'time_period' in data.columns
-    
+
     chart = plotter.plot()
     chart.save('standardized_feature_plot.html')
     chart.save('standardized_feature_plot.png')

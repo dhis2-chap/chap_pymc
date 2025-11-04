@@ -1,12 +1,18 @@
 import arviz as az
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 import pymc as pm
-import numpy as np
 import pytest
 import xarray
-from chap_pymc.curve_parametrizations.fourier_parametrization_plots import plot_vietnam_faceted_predictions
-from chap_pymc.curve_parametrizations.fourier_parametrization import FourierParametrization, FourierHyperparameters
+
+from chap_pymc.curve_parametrizations.fourier_parametrization import (
+    FourierHyperparameters,
+    FourierParametrization,
+)
+from chap_pymc.curve_parametrizations.fourier_parametrization_plots import (
+    plot_vietnam_faceted_predictions,
+)
 from chap_pymc.inference_params import InferenceParams
 from chap_pymc.model_input_creator import ModelInputCreator
 from chap_pymc.models.seasonal_fourier_regression import SeasonalFourierRegression
@@ -75,7 +81,9 @@ def test_vietnam_y_xarray_fixture(vietnam_y_xarray):
 
 def test_fourier_parametrization(y, coords):
     """Test Fourier parametrization with synthetic data and create faceted plot"""
-    from chap_pymc.curve_parametrizations.fourier_parametrization_plots import plot_faceted_predictions
+    from chap_pymc.curve_parametrizations.fourier_parametrization_plots import (
+        plot_faceted_predictions,
+    )
     coords |= {'harmonic': np.arange(0, 3)}  # Add harmonic coordinate (0=baseline, 1-2=harmonics)
     with pm.Model(coords=coords) as model:
         FourierParametrization().get_model(y)
@@ -269,7 +277,9 @@ def test_vietnam_fourier_fit(vietnam_y_xarray):
 
 def test_vietnam_parameter_correlations(viet_model_input):
     """Fit Fourier model and plot parameter-feature correlations"""
-    from chap_pymc.curve_parametrizations.fourier_parametrization_plots import plot_parameter_feature_correlations
+    from chap_pymc.curve_parametrizations.fourier_parametrization_plots import (
+        plot_parameter_feature_correlations,
+    )
 
     # Extract coordinates and data
     vietnam_y = viet_model_input.y

@@ -1,18 +1,18 @@
+import logging
 from typing import Any
 
 import numpy as np
 import pydantic
-import pymc.dims as pmd
-import xarray
 import pymc as pm
-import pytensor.xtensor as px
+import pymc.dims as pmd
 import pytensor.tensor as pt
+import pytensor.xtensor as px
+import xarray
 from pytensor.xtensor.type import XTensorVariable, as_xtensor
-import logging
 
 logger = logging.getLogger(__name__)
 
-from chap_pymc.model_input_creator import FullModelInput, FourierModelInput
+from chap_pymc.model_input_creator import FourierModelInput
 
 
 class FourierHyperparameters(pydantic.BaseModel):
