@@ -133,7 +133,7 @@ class FourierInputCreator:
         self,
         seasonal_data: SeasonalTransform,
         add_last_year: bool = False
-    ) -> np.ndarray[tuple[Any, ...], np.dtype[np.float64]]:
+    ) -> xarray.DataArray:
         """
         Extract and standardize feature arrays (e.g., lagged temperature).
 
@@ -158,7 +158,7 @@ class FourierInputCreator:
         return X
 
 
-def test_fourier_input_creator(simple_df):
+def test_fourier_input_creator(simple_df) -> None:
     """Test that FourierInputCreator produces xarray DataArrays with correct shapes and coordinates."""
     # Create synthetic data
     df, n_locations = simpled_df

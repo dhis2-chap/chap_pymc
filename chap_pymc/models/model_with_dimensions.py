@@ -24,10 +24,10 @@ class ModelParams(pydantic.BaseModel):
     mixture_weight_prior: tuple[float, float] = (0.5, 0.5)  # U-shaped: heavy at 0 and 1, low in middle
 
 class DimensionalModel:
-    def __init__(self, model_params: ModelParams=ModelParams()):
+    def __init__(self, model_params: ModelParams=ModelParams()) -> None:
         self._model_params = model_params
 
-    def build_model(self, model_input: ModelInput):
+    def build_model(self, model_input: ModelInput) -> None:
         params = self._model_params
         L, Y, M = model_input.y.shape
         if model_input.X.size:
@@ -114,7 +114,7 @@ class DimensionalModel:
 
 
 @pytest.fixture()
-def model_input():
+def model_input() -> ModelInput:
     L, Y, M = 3, 4, 12
     months = np.arange(M)
     pattern = np.sin(2 * np.pi * months / 12)
@@ -131,7 +131,7 @@ def model_input():
     model_input = ModelInput(X, y, seasonal_pattern, seasonal_errors, last_month=3)
     return model_input
 
-def test_model_with_dimensions(model_input):
+def test_model_with_dimensions(model_input: ModelInput) -> None:
     with pm.Model(coords={
         'feature': [f'temp_lag{3-i}'for i in range(3)],
         'location': [f'Loc{i+1}' for i in range(model_input.y.shape[0])],
@@ -143,7 +143,7 @@ def test_model_with_dimensions(model_input):
         idata = pm.sample(10, tune=5, chains=1, return_inferencedata=True)
     assert idata is not None
 
-def test_mixture_model(model_input):
+def test_mixture_model(model_input: ModelInput) -> None:
     """Test the mixture model with continuous mixture weights (works with ADVI)"""
     params = ModelParams(use_mixture=True, mixture_weight_prior=(2.0, 2.0))
     with pm.Model(coords={

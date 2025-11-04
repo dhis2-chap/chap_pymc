@@ -20,7 +20,7 @@ class InferenceParams(BaseModel):
     progressbar: bool = True
 
     @classmethod
-    def debug(cls):
+    def debug(cls) -> 'InferenceParams':
         return InferenceParams(
             draws=50,
             tune=10,

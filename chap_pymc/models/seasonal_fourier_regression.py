@@ -2,6 +2,7 @@
 SeasonalFourierRegression - Fourier-based seasonal disease forecasting model
 """
 import logging
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -17,7 +18,7 @@ from chap_pymc.model_input_creator import FourierInputCreator
 logging.basicConfig(level=logging.INFO)
 
 
-def create_output(training_pdf: pd.DataFrame, posterior_samples: np.ndarray, n_samples: int = 1000):
+def create_output(training_pdf: pd.DataFrame, posterior_samples: np.ndarray, n_samples: int = 1000) -> pd.DataFrame:
     """
     Convert posterior samples to output DataFrame format.
 
@@ -68,7 +69,7 @@ class SeasonalFourierRegression:
         inference_params: InferenceParams = InferenceParams(),
         fourier_hyperparameters: FourierHyperparameters = FourierHyperparameters(),
         mask_empty_seasons: bool = False
-    ):
+    ) -> None:
         """
         Initialize SeasonalFourierRegression.
 
@@ -92,7 +93,7 @@ class SeasonalFourierRegression:
         training_data: pd.DataFrame,
         n_samples: int = 1000,
         return_inference_data: bool = False
-    ):
+    ) -> pd.DataFrame | tuple[pd.DataFrame, Any]:
         """
         Fit Fourier model and generate predictions for the next prediction_length months.
 

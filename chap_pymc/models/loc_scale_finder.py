@@ -20,7 +20,7 @@ class LocScalePatternFinder:
     so that y[l, s, m] = loc[l, s] + scale[l,s] * pattern[l,m] + noise
     '''
 
-    def __init__(self, data: np.ndarray):
+    def __init__(self, data: np.ndarray) -> None:
         self._data = data
 
     def find_params(self) -> OutbreakParams:
@@ -78,7 +78,7 @@ class LocScalePatternFinder:
 
 
 @pytest.fixture
-def data():
+def data() -> np.ndarray:
     n_loc, n_years, n_months = 2, 3, 4
     patterns = np.array([
         [0.0, 1.0, 2.0, 1.0],  # pattern for location 1
@@ -96,7 +96,7 @@ def data():
     noise = np.random.rand(n_loc*n_years*n_months).reshape((n_loc, n_years, n_months))
     return eta+noise
 
-def test_loc_scale_pattern_finder(data):
+def test_loc_scale_pattern_finder(data: np.ndarray) -> None:
     finder = LocScalePatternFinder(data)
     params = finder.find_params()
     predictions = finder.predict(params)

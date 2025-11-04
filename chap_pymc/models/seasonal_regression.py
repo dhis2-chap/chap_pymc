@@ -1,5 +1,6 @@
 import dataclasses
 import logging
+from typing import Any
 
 import cyclopts
 import numpy as np
@@ -26,13 +27,13 @@ TESTING=False
 logging.basicConfig(level=logging.INFO)
 
 
-def Deterministic(name, value):
+def Deterministic(name: str, value: Any) -> Any:
     if TESTING:
         return pm.Deterministic(name, value)
     return value
 
 
-def create_output(training_pdf, posterior_samples, n_samples=1000):
+def create_output(training_pdf: pd.DataFrame, posterior_samples: np.ndarray, n_samples: int = 1000) -> pd.DataFrame:
     n_samples = min(n_samples, posterior_samples.shape[-1])
     horizon = posterior_samples.shape[-2]
     locations = training_pdf['location'].unique()
@@ -68,7 +69,7 @@ class ModelParams(ModelDefParams):
     mask_empty_seasons: bool = False
 
 class SeasonalRegression:
-    def __init__(self, prediction_length=3, lag=3, inference_params=InferenceParams(), model_params=ModelParams()):
+    def __init__(self, prediction_length: int = 3, lag: int = 3, inference_params: InferenceParams = InferenceParams(), model_params: ModelParams = ModelParams()) -> None:
         self._prediction_length = prediction_length
         self._lag = lag
         self._inference_params = inference_params
@@ -76,10 +77,10 @@ class SeasonalRegression:
         self._explanation_plots = []
 
     @property
-    def explanation_plots(self):
+    def explanation_plots(self) -> list[Any]:
         return self._explanation_plots
 
-    def predict(self, training_data: pd.DataFrame, return_idata=False):
+    def predict(self, training_data: pd.DataFrame, return_idata: bool = False) -> pd.DataFrame | tuple[pd.DataFrame, Any]:
         model_input = self.create_model_input(training_data)
         with pm.Model() as _:
             self.define_stable_model(model_input)
@@ -96,7 +97,7 @@ class SeasonalRegression:
         else:
             return create_output(training_data, preds)
 
-    def predict_with_dims(self, training_data: pd.DataFrame, n_samples=1000):
+    def predict_with_dims(self, training_data: pd.DataFrame, n_samples: int = 1000) -> pd.DataFrame:
         creator = ModelInputCreator(
             prediction_length=self._prediction_length,
             lag=self._lag,
@@ -123,7 +124,7 @@ class SeasonalRegression:
         return create_output(training_data, preds)
 
 
-    def predict_advi(self, training_data: pd.DataFrame, n_samples=1000, return_approx=False):
+    def predict_advi(self, training_data: pd.DataFrame, n_samples: int = 1000, return_approx: bool = False) -> pd.DataFrame | tuple[pd.DataFrame, Any]:
         model_input = self.create_model_input(training_data)
 
         with pm.Model():
@@ -159,7 +160,7 @@ class SeasonalRegression:
         self._seasonal_data = creator.seasonal_data
         return model_input
 
-    def plot_model_input(self, model_input: FullModelInput):
+    def plot_model_input(self, model_input: FullModelInput) -> None:
         L, Y, M = model_input.y.shape
         for _loc in range(L):
             ...
@@ -201,7 +202,7 @@ class SeasonalRegression:
                   observed=model_input.y[:, -1:, last_year_slice])
         return Y
 
-    def plot_effect_trace(self, idata):
+    def plot_effect_trace(self, idata: Any) -> None:
         beta = idata.posterior['slope'].stack(samples=("chain", "draw")).values
         print(beta.shape)
         for lag in range(self._lag):
@@ -209,7 +210,7 @@ class SeasonalRegression:
             plt.title(f"{lag}")
             plt.show()
 
-    def define_stable_model(self, model_input: FullModelInput):
+    def define_stable_model(self, model_input: FullModelInput) -> None:
         L, Y, M = model_input.y.shape
         if model_input.X.size:
             X = model_input.X
@@ -255,10 +256,10 @@ class SeasonalRegression:
 
 
 
-    def _get_longform_trace(self, idata, param_names: list[str]):
+    def _get_longform_trace(self, idata: Any, param_names: list[str]) -> None:
         ...
 
-    def set_explanation_plots(self, training_data: FullModelInput, idata, year_idx=None):
+    def set_explanation_plots(self, training_data: FullModelInput, idata: Any, year_idx: int | None = None) -> None:
         param_names = ['eta', 'sampled_eta', 'samples', 'transformed_samples', 'transformed_pattern', 'epsilon', 'scale']
         median_dict = {name: idata.posterior[name].median(dim=['chain', 'draw']).values for name in param_names}
 
@@ -356,7 +357,7 @@ class SeasonalRegression:
         #chart.save('seasonal_regression_explanation.html')
         self._explanation_plots.append(chart)
 
-    def plot_trace(self, idata, output_file=None):
+    def plot_trace(self, idata: Any, output_file: str | None = None) -> None:
         """Plot trace plots for all alpha (intercept) and beta (slope) parameters."""
 
         # Get parameter data
@@ -437,7 +438,7 @@ class SeasonalRegression:
 
         plt.close()
 
-    def pyplot_last_year(self, model_input, idata):
+    def pyplot_last_year(self, model_input: FullModelInput, idata: Any) -> None:
         pre_noise = idata.posterior['transformed_pattern'].median(dim=('chain', 'draw')).values
         pred_line = idata.posterior['transformed_samples']
         med = pred_line.median(dim=('chain', 'draw')).values
@@ -458,7 +459,7 @@ class SeasonalRegression:
             plt.show()
 
 
-    def plot_prediction(self, idata, training_data, output_file=None):
+    def plot_prediction(self, idata: Any, training_data: pd.DataFrame, output_file: str | None = None) -> None:
         """Plot median transformed_samples vs actual observed y, faceted by year (rows) and location (columns)."""
 
         # Prepare the training data
@@ -546,7 +547,7 @@ class SeasonalRegression:
 
         plt.close()
 
-def test_nepal(nepal_data: pd.DataFrame):
+def test_nepal(nepal_data: pd.DataFrame) -> None:
     global TESTING
     TESTING = True
     model = SeasonalRegression(inference_params=InferenceParams(chains=2, tune=200, draws=200),
@@ -557,7 +558,7 @@ def test_nepal(nepal_data: pd.DataFrame):
     #for plot in model.explanation_plots:
     #    plot.show()
 
-def test_seasonal_regression(large_df: pd.DataFrame):
+def test_seasonal_regression(large_df: pd.DataFrame) -> None:
     global TESTING
     # TESTING = True
     model = SeasonalRegression(inference_params=InferenceParams(chains=4, tune=400, draws=400).debug(),
@@ -570,7 +571,7 @@ def test_seasonal_regression(large_df: pd.DataFrame):
         plot.show()
 
 
-def test_advi(large_df: pd.DataFrame):
+def test_advi(large_df: pd.DataFrame) -> None:
     global TESTING
     #TESTING = True
     model = SeasonalRegression(inference_params=InferenceParams().debug(),
@@ -582,20 +583,20 @@ def test_advi(large_df: pd.DataFrame):
     #for plot in model.explanation_plots:
     #    plot.show()
 
-def test_begin_season(thai_begin_season):
+def test_begin_season(thai_begin_season: pd.DataFrame) -> None:
     #first_group = next(iter(thai_begin_season.groupby('location')))[1]
     #hai_begin_season = first_group
     model = SeasonalRegression(inference_params=InferenceParams(), lag=3, prediction_length=3)
     model.predict(thai_begin_season)
 
-def test_viet_begin_season(viet_begin_season):
+def test_viet_begin_season(viet_begin_season: pd.DataFrame) -> None:
     global TESTING
     TESTING = True
     model = SeasonalRegression(inference_params=InferenceParams(), lag=3, prediction_length=3)
     model.predict_with_dims(viet_begin_season)
 
 @pytest.fixture()
-def model_input():
+def model_input() -> FullModelInput:
     L, Y, M = 1, 2, 12
     months = np.array(L * [[np.arange(M)]])
     return FullModelInput(
@@ -606,7 +607,7 @@ def model_input():
         last_month=3
     )
 
-def test_anti_pattern(model_input):
+def test_anti_pattern(model_input: FullModelInput) -> None:
     params = InferenceParams(chains=2, draws=200, tune=500)
     reg = SeasonalRegression(inference_params=params, lag=3, prediction_length=3)
     with pm.Model():
@@ -630,7 +631,7 @@ def test_anti_pattern(model_input):
     assert scales[-1] < 0.1, scale.values
     assert scales[0] > 0.5, scale.values
 
-def test_altair():
+def test_altair() -> None:
     chart = alt.Chart(pd.DataFrame({
         'x': np.arange(10),
         'y': np.random.rand(10),
@@ -642,7 +643,7 @@ def test_altair():
     )
     chart.save('test_altair.png')
 
-def test_sample_broadcasting():
+def test_sample_broadcasting() -> None:
     means = np.arange(6).reshape((2, 1, 3))
     print(means)
     samples = pm.draw(pm.Normal.dist(mu=means, sigma=0.1, shape=(2, 4, 3)))
@@ -651,7 +652,7 @@ def test_sample_broadcasting():
 app = cyclopts.App()
 
 @app.command()
-def predict(csv_file: str):
+def predict(csv_file: str) -> None:
     df = pd.read_csv(csv_file)
     model = SeasonalRegression()
     if False:
@@ -666,7 +667,7 @@ def predict(csv_file: str):
     preds.to_csv('seasonal_regression_output.csv', index=False)
 
 @app.command()
-def explain(csv_file: str, output_folder: str = '.', inference_params: InferenceParams = InferenceParams()):
+def explain(csv_file: str, output_folder: str = '.', inference_params: InferenceParams = InferenceParams()) -> None:
     import chap_core
     from chap_core.assessment.dataset_splitting import train_test_generator
     dataset = chap_core.data.DataSet.from_csv(csv_file)
@@ -682,7 +683,7 @@ def explain(csv_file: str, output_folder: str = '.', inference_params: Inference
 
 
 
-def test_explain(data_path, tmp_path):
+def test_explain(data_path: Any, tmp_path: Any) -> None:
     explain(data_path/'training_data.csv', tmp_path, InferenceParams().debug())
 
 

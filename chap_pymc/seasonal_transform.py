@@ -1,5 +1,5 @@
 import logging
-from typing import Literal
+from typing import Any, Literal
 
 #import altair
 import numpy as np
@@ -25,7 +25,7 @@ class SeasonalTransform:
     . The year starts at the month with the lowest average incidence
     of disease cases.
     '''
-    def coords(self):
+    def coords(self) -> dict[str, np.ndarray]:
         return {
             'location': self._df['location'].unique(),
             'year': np.arange(self._df['season_idx'].nunique()-1),
@@ -33,7 +33,7 @@ class SeasonalTransform:
         }
 
 
-    def __init__(self, df: pd.DataFrame, params: TransformParameters = TransformParameters()):
+    def __init__(self, df: pd.DataFrame, params: TransformParameters = TransformParameters()) -> None:
         '''
         df: DataFrame with columns ['location', 'time_period', target_name]
         target_name: Name of the target variable column in df
@@ -79,7 +79,7 @@ class SeasonalTransform:
         self._pad_right = max(self.last_seasonal_month + min_post_months - MONTHS_PER_YEAR + 1, 0) if min_post_months is not None else 0
         self._remove_first_year = self.first_seasonal_month > 0
 
-    def _find_min_month(self):
+    def _find_min_month(self) -> int:
         means = [(month, group['y'].mean()) for month, group in self._df.groupby('month')]
         min_month, val  = min(means, key=lambda x: x[1])
         max_month, val = max(means, key=lambda x: x[1])
@@ -94,7 +94,7 @@ class SeasonalTransform:
             return med
 
 
-    def get_df(self, feature_name, start_year=None):
+    def get_df(self, feature_name: str, start_year: int | None = None) -> pd.DataFrame:
         array = self[feature_name]
         rows = [
             {
@@ -110,7 +110,7 @@ class SeasonalTransform:
         return pd.DataFrame(rows)
 
 
-    def plot_feature(self, feature_name):
+    def plot_feature(self, feature_name: str) -> Any:
         import altair as alt
         df = self.get_df(feature_name, start_year=1)
         chart = alt.Chart(df).mark_line().encode(
@@ -125,7 +125,7 @@ class SeasonalTransform:
         )
         return chart
 
-    def get_xarray(self, feature_name, drop_first_year=False, add_last_year=False) -> xarray.DataArray:
+    def get_xarray(self, feature_name: str, drop_first_year: bool = False, add_last_year: bool = False) -> xarray.DataArray:
         s = self._df.set_index(['location', 'season_idx', 'seasonal_month'])[feature_name].sort_index()
         data_array = s.to_xarray()
         if add_last_year:
@@ -238,7 +238,7 @@ class SeasonalTransform:
         logger.info(f"After dropping first year: result.shape = {result.shape}")
         return result
 
-    def __getitem__(self, feature_name) -> np.ndarray:
+    def __getitem__(self, feature_name: str) -> np.ndarray:
         """
         Extract feature as array with shape (locations, seasons, months).
 
@@ -254,7 +254,7 @@ class SeasonalTransform:
         return result
 
 
-def test_seasonal_transform(df: pd.DataFrame):
+def test_seasonal_transform(df: pd.DataFrame) -> None:
     df['y'] = np.log1p(df['disease_cases'])
     st = SeasonalTransform(df)
     pivoted = st['y']
@@ -263,7 +263,7 @@ def test_seasonal_transform(df: pd.DataFrame):
 #def test_nepal_min(nepal_data: pd.DataFrame):
 #    SeasonalTransform(nepal_data)
 
-def test_xarray(colombia_df: pd.DataFrame):
+def test_xarray(colombia_df: pd.DataFrame) -> None:
     import altair
     df = colombia_df
     df['y'] = np.log1p(df['disease_cases'])
@@ -290,13 +290,13 @@ def test_xarray(colombia_df: pd.DataFrame):
     chart.save('seasonal_correlation.html')
     chart.save('seasonal_correlation.png')
 
-def test_right_pad(df: pd.DataFrame):
+def test_right_pad(df: pd.DataFrame) -> None:
     df['y'] = np.log1p(df['disease_cases'])
     st = SeasonalTransform(df, TransformParameters(min_post_months=7))
     pivoted = st['y']
     assert pivoted.shape == (7, 13, 13), pivoted
 
-def test_left_pad(df: pd.DataFrame):
+def test_left_pad(df: pd.DataFrame) -> None:
     df['y'] = np.log1p(df['disease_cases'])
     st = SeasonalTransform(df, TransformParameters(min_prev_months=7))
     pivoted = st['y']

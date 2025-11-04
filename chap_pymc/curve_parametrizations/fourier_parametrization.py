@@ -23,13 +23,13 @@ class FourierHyperparameters(pydantic.BaseModel):
 
 class FourierParametrization:
 
-    def __init__(self, hyper_params: FourierHyperparameters = FourierHyperparameters()):
+    def __init__(self, hyper_params: FourierHyperparameters = FourierHyperparameters()) -> None:
         self.hyper_params = hyper_params
 
-    def get_regression_model(self, X: xarray.DataArray, y: xarray.DataArray):
+    def get_regression_model(self, X: xarray.DataArray, y: xarray.DataArray) -> None:
         return self.get_model(y, A_offset=self._linear_effect(X))
 
-    def _mixture_weights(self, n_years) -> float | pmd.DimDistribution:
+    def _mixture_weights(self, n_years: int) -> float | Any:
         if self.hyper_params.do_mixture:
             # Continuous mixture weight per location-year: 0 < z < 1
             # z=1 means full seasonal pattern, z=0 means flat line at 0
@@ -48,7 +48,7 @@ class FourierParametrization:
         else:
             return 1.0
 
-    def _get_mv_harmonic(self, dim, coords):
+    def _get_mv_harmonic(self, dim: str, coords: dict[str, Any]) -> Any:
         pm.modelcontext(None).add_coord(f'{dim}_corr', coords[dim])
         n = len(coords[dim])
         sd_dist = pm.Exponential.dist(1.0, size=n)
@@ -62,7 +62,7 @@ class FourierParametrization:
         mv = pm.MvNormal(f'{dim}_mu', np.zeros(n), chol=cholesky, shape=(len(coords['location']), n), dims=('location', dim))
         return pmd.as_xtensor(mv, dims=('location', dim))
 
-    def get_model(self, y: xarray.DataArray, A_offset: float | pmd.DimDistribution = 0.0):
+    def get_model(self, y: xarray.DataArray, A_offset: float | Any = 0.0) -> None:
         missing_mask = y.isnull()
         a_mu = pmd.Normal('a_mu', mu=0, sigma=1, dims=('location', 'harmonic'))
         #a_mu = self._get_mv_harmonic('harmonic', pm.modelcontext(None).coords)
@@ -111,7 +111,7 @@ class FourierParametrization:
         epsilon = as_xtensor(epsilon, dims=('location', 'year', 'month'))
         return epsilon
 
-    def _calculate_mu(self, A: pmd.DimDistribution, n_months) -> XTensorVariable:
+    def _calculate_mu(self, A: Any, n_months: int) -> Any:
         months = pmd.as_xtensor(np.arange(n_months), dims=('month',))
         harmonics = pmd.as_xtensor(np.arange(self.hyper_params.n_harmonics + 1), dims=('harmonic',))
         phi = pmd.Normal('phi', 0, sigma=np.pi, dims=('location', 'harmonic'))
@@ -121,7 +121,7 @@ class FourierParametrization:
         mu = pmd.Deterministic('mu', harmonics_term.sum(dim='harmonic'), dims=('location', 'year', 'month'))
         return mu
 
-    def _linear_effect(self, X: xarray.DataArray) -> pmd.DimDistribution:
+    def _linear_effect(self, X: xarray.DataArray) -> Any:
         beta = pmd.Normal('slope', mu=0, sigma=10, dims=('feature', 'harmonic'))
         # This is a batched matrix multiplication over the feature dimension
         result_tensor = pt.tensordot(X.values, beta.values, axes=[[2], [0]])
