@@ -84,7 +84,7 @@ def test_fourier_parametrization(y, coords):
     from chap_pymc.curve_parametrizations.fourier_parametrization_plots import (
         plot_faceted_predictions,
     )
-    coords |= {'harmonic': np.arange(0, 3)}  # Add harmonic coordinate (0=baseline, 1-2=harmonics)
+    coords |= {'harmonic': np.arange(0, 4)}  # Add harmonic coordinate (0=baseline, 1-3=harmonics for n_harmonics=3)
     with pm.Model(coords=coords) as model:
         FourierParametrization().get_model(y)
         idata = pm.sample(draws=100, tune=100, progressbar=True, return_inferencedata=True)
