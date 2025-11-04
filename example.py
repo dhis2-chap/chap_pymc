@@ -31,7 +31,6 @@ from plotting import (
 from util import (
     complete_monthly_panel,
     extract_month_indices,
-    safe_impute,
     to_tensor_panels,
 )
 
@@ -82,17 +81,11 @@ def prepare_data(args: Config, raw):
 
     # Target (T, L)
     y = to_tensor_panels(panel, time_idx, locs, 'time_period', 'location', 'disease_cases')
-    if np.isnan(y).any():
-        y = safe_impute(y)
     y = np.clip(y, 0, None).astype(int)
 
     # Population (T, L) for offset - only if available
     if has_population:
         pop = to_tensor_panels(panel, time_idx, locs, 'time_period', 'location', 'population')
-
-        # Forward fill any missing population values
-        if np.isnan(pop).any():
-            pop = safe_impute(pop)
         log_pop_offset = np.log(np.clip(pop, 1.0, None))  # Ensure positive population
     else:
         # Create zero offset if no population data (equivalent to no offset)

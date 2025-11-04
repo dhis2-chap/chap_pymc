@@ -161,6 +161,7 @@ def test_fourier_input_creator():
     """Test that FourierInputCreator produces xarray DataArrays with correct shapes and coordinates."""
     # Create synthetic data
     locations = ['LocationA', 'LocationB']
+    n_locations = len(locations)
     n_months = 36  # 3 years of data
     dates = pd.date_range('2020-01', periods=n_months, freq='MS')
     time_periods = pd.date_range('2020-01', periods=n_months, freq='MS')
@@ -188,7 +189,7 @@ def test_fourier_input_creator():
     assert isinstance(model_input.y, xarray.DataArray)
 
     # Check shapes
-    n_locations = len(locations)
+
     assert model_input.X.shape[0] == n_locations
     assert model_input.X.shape[2] == 3  # lag
 
