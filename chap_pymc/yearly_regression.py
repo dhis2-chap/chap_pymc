@@ -52,7 +52,6 @@ def basic_season_regression(df: pd.DataFrame, test_size=0.2, random_state=42):
     X_train, X_test, y_train, y_test, loc_idx_train, loc_idx_test = train_test_split(
         X, y, location_idx, test_size=test_size, random_state=random_state, stratify=location_idx
     )
-    do_location_beta = False
     with (pm.Model() as model):
         start_period = 6
         alpha = pm.Normal('intercept', mu=0, sigma=10, shape=n_locations)
@@ -112,7 +111,7 @@ def evaluate_model_performance(trace, X_train, X_test, y_train, y_test, loc_idx_
     # Extract posterior samples
     alpha_samples = trace.posterior['intercept'].values.reshape(-1, trace.posterior['intercept'].shape[-1])
     beta_samples = trace.posterior['slope'].values.reshape(-1, trace.posterior['slope'].shape[-2])
-    mu_samples = trace.posterior['mu_train'].values.reshape(-1, trace.posterior['mu_train'].shape[-1])
+    trace.posterior['mu_train'].values.reshape(-1, trace.posterior['mu_train'].shape[-1])
     start_period = beta_samples.shape[1]
 
     def predict_samples(X, loc_idx):
@@ -186,7 +185,7 @@ def evaluate_model_performance(trace, X_train, X_test, y_train, y_test, loc_idx_
     return train_metrics, test_metrics, (y_train_pred, y_test_pred)
 
 def test_yearly_max_regression(df):
-    seasonal_data = SeasonCorrelationPlot(df).data()
+    SeasonCorrelationPlot(df).data()
     model, trace, (X_train, X_test, y_train, y_test, loc_idx_train, loc_idx_test) = basic_season_regression(df)
 
     # Print basic summary

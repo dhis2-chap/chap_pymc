@@ -13,12 +13,12 @@ def dim1():
                                     mu=0,
                                     sigma=1,
                                     steps=10)
-    draws = pm.draw(ar, 3)
-    with pm.Model() as model:
+    pm.draw(ar, 3)
+    with pm.Model():
         walk = pm.GaussianRandomWalk(
             "walk", init_dist=pm.Normal.dist(0, 1), sigma=1, steps=10
         )
-        obs = pm.Normal('obs', mu=walk[:8], sigma=1., observed=data)
+        pm.Normal('obs', mu=walk[:8], sigma=1., observed=data)
         idata = pm.sample(draws=100,
                           tune=100,
                           chains=2,
@@ -33,11 +33,11 @@ def dim2():
                                     mu=2,sigma=1, steps=10)
     draws = pm.draw(ar, 3)
     print(draws)
-    with pm.Model() as model:
+    with pm.Model():
         walk = pm.GaussianRandomWalk("walk", init_dist=pm.Normal.dist((0,1), 1),
                                     mu=2,sigma=1, steps=10)
         print(walk.type)
-        obs = pm.Normal("obs", mu=walk[:,:7], sigma=1., observed=data.T)
+        pm.Normal("obs", mu=walk[:,:7], sigma=1., observed=data.T)
         idata = pm.sample(draws=100,tune=100,chains=2,progressbar=True)
     az.plot_posterior(idata, var_names='walk')
     plt.show()

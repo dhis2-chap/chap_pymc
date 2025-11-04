@@ -228,7 +228,7 @@ def analyze_data(df: pd.DataFrame):
     st.subheader("Analysis Details")
     st.write(f"Minimum disease cases month: {min_month} (avg cases: {val:.2f})")
 
-    horizon = st.slider("Forecast Horizon", min_value=1, max_value=12, value=3)
+    st.slider("Forecast Horizon", min_value=1, max_value=12, value=3)
 
     # Add season column (month - min_month, wrapped)
     assert df['month'].max()==11
@@ -295,7 +295,7 @@ def analyze_data(df: pd.DataFrame):
                      'season_mean', 'season_std', 'log1p_normalized',
                      'pattern_mean', 'pattern_std', 'fully_normalized', 'linear_trend', 'fully_normalized_detrended']].head())
 
-    locations = df['location'].unique()
+    df['location'].unique()
 
     # Create long format DataFrame for normalization stages
     st.subheader("Comparison: Unnormalized → Location Normalized → Standardized → Pattern Normalized → Detrended")

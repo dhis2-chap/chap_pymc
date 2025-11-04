@@ -113,7 +113,7 @@ class FourierInputCreator:
         prev_year_end = y.isel(month=-1, year=slice(None, -1))
         y = y.isel(year=slice(1, None))  # Drop first year to align with X
         if X.isnull().any():
-            assert False,  f"NaNs found in feature array X: {X.where(X.isnull(), drop=True)}"
+            raise AssertionError(f"NaNs found in feature array X: {X.where(X.isnull(), drop=True)}")
 
 
 
@@ -202,6 +202,7 @@ def simpled_df() -> tuple[pd.DataFrame, int]:
     n_months = 36  # 3 years of data
     dates = pd.date_range('2020-01', periods=n_months, freq='MS')
     time_periods = [date.strftime('%Y-%m') for date in dates]
+    data = []
     for loc in locations:
         for i, time_period in enumerate(time_periods):
             # time_period = date.strftime('%Y-%m')

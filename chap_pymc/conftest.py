@@ -60,7 +60,7 @@ def viet_full_year(data_path) -> pd.DataFrame:
     return (df for df in get_full_year(country, data_path))
 
 def get_full_year(country, data_path: Path) -> pd.DataFrame:
-    csv_file = data_path / ('%s.csv' % country)
+    csv_file = data_path / (f'{country}.csv')
     dataset = chap_core.data.DataSet.from_csv(csv_file)
 
     train_data, test_instances = train_test_generator(dataset, prediction_length=3, n_test_sets=12)
@@ -70,12 +70,12 @@ def get_full_year(country, data_path: Path) -> pd.DataFrame:
         f = future_data.to_pandas()
         f.time_period = f.time_period.astype(str)
         df.time_period = df.time_period.astype(str)
-        logger.info('Yielding test instance %d' % i)
+        logger.info(f'Yielding test instance {i}')
         i += 1
         yield df, f
 
 def get_test_instance(country: str, data_path: Path, offset: int) -> pd.DataFrame:
-    csv_file = data_path / ('%s.csv' % country)
+    csv_file = data_path / (f'{country}.csv')
     dataset = chap_core.data.DataSet.from_csv(csv_file)
 
     train_data, _ = train_test_generator(dataset, prediction_length=3, n_test_sets=offset)

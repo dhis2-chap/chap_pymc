@@ -137,7 +137,7 @@ def test_model_with_dimensions(model_input):
         'location': [f'Loc{i+1}' for i in range(model_input.y.shape[0])],
         'year': [f'202{i}' for i in range(model_input.y.shape[1])],
         'month': list(range(1, 13))
-        }) as model:
+        }):
         DimensionalModel().build_model(model_input)
         #define_stable_model(model_input)
         idata = pm.sample(10, tune=5, chains=1, return_inferencedata=True)
@@ -151,7 +151,7 @@ def test_mixture_model(model_input):
         'location': [f'Loc{i+1}' for i in range(model_input.y.shape[0])],
         'year': [f'202{i}' for i in range(model_input.y.shape[1])],
         'month': list(range(1, 13))
-        }) as model:
+        }):
         DimensionalModel(model_params=params).build_model(model_input)
         idata = pm.sample(10, tune=5, chains=1, return_inferencedata=True)
     assert idata is not None

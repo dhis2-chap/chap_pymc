@@ -125,7 +125,7 @@ class SeasonalFourierRegression:
 
         # Build and fit Fourier model
         logging.info("Building Fourier parametrization model...")
-        with pm.Model(coords=coords) as pm_model:
+        with pm.Model(coords=coords):
             X = model_input.X
             y = model_input.y
 

@@ -10,9 +10,9 @@ import pytensor.xtensor as px
 import xarray
 from pytensor.xtensor.type import XTensorVariable, as_xtensor
 
-logger = logging.getLogger(__name__)
-
 from chap_pymc.model_input_creator import FourierModelInput
+
+logger = logging.getLogger(__name__)
 
 
 class FourierHyperparameters(pydantic.BaseModel):

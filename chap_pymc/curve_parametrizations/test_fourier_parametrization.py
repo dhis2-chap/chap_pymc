@@ -85,7 +85,7 @@ def test_fourier_parametrization(y, coords):
         plot_faceted_predictions,
     )
     coords |= {'harmonic': np.arange(0, 4)}  # Add harmonic coordinate (0=baseline, 1-3=harmonics for n_harmonics=3)
-    with pm.Model(coords=coords) as model:
+    with pm.Model(coords=coords):
         FourierParametrization().get_model(y)
         idata = pm.sample(draws=100, tune=100, progressbar=True, return_inferencedata=True)
 
@@ -138,7 +138,7 @@ def test_nepal_regresion(nepal_data):
 
 @pytest.mark.slow
 def test_full_vietnam_regression(viet_full_year):
-    for i, (viet_instance, t) in enumerate(viet_full_year):
+    for i, (viet_instance, _t) in enumerate(viet_full_year):
         if i<7:
             continue
         creator = ModelInputCreator(prediction_length=3, lag=3)
@@ -184,13 +184,13 @@ def test_vietnam_regression(viet_model_input,  viet_idata_path=None, i=0):
     plot_vietnam_faceted_predictions(viet_model_input.y, mu_mean, mu_lower, mu_upper, viet_coords, output_file=f'vietnam_fourier_fit_{i}.png')
 
 def test_vietnam(viet_begin_season, debug_model):
-    preds = debug_model.predict(viet_begin_season)
+    debug_model.predict(viet_begin_season)
 
 
 def test_nepal(nepal_data: pd.DataFrame, debug_model):
     global TESTING
     TESTING = True
-    preds = debug_model.predict(nepal_data)
+    debug_model.predict(nepal_data)
 
 @pytest.fixture
 def debug_model() -> SeasonalFourierRegression:
@@ -300,7 +300,7 @@ def test_vietnam_parameter_correlations(viet_model_input):
 
 
     # Build and sample the model
-    with pm.Model(coords=coords) as model:
+    with pm.Model(coords=coords):
         FourierParametrization(FourierHyperparameters(n_harmonics=n_harmonics)).get_model(vietnam_y)
         idata = pm.sample(draws=500, tune=500, progressbar=True, return_inferencedata=True)
 

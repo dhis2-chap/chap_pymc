@@ -144,9 +144,9 @@ def format_predictions(ppc, data_dict, args):
     fut_dates = [str(p)[:7] for p in fut_dates]
 
     rows = [
-        [fut_dates[h], locs[l]] + list(fut_Y[h, l, :].values.tolist())
+        [fut_dates[h], locs[loc_idx]] + list(fut_Y[h, loc_idx, :].values.tolist())
         for h in range(H)
-        for l in range(len(locs))
+        for loc_idx in range(len(locs))
     ]
     col_names = ['time_period', 'location'] + [f'sample_{i}' for i in range(fut_Y.shape[-1])]
     out_df = pd.DataFrame(rows, columns=col_names)
@@ -184,9 +184,9 @@ def format_predictions_from_historic_end(ppc, extended_data_dict, args: Config):
     fut_dates = [str(p)[:7] for p in fut_dates]
 
     rows = [
-        [fut_dates[h], locs[l]] + list(fut_Y[..., h, l, :].values.ravel().tolist())
+        [fut_dates[h], locs[loc_idx]] + list(fut_Y[..., h, loc_idx, :].values.ravel().tolist())
         for h in range(H)
-        for l in range(len(locs))
+        for loc_idx in range(len(locs))
     ]
 
     sample_names = [f'sample_{i}' for i in range(args.draws*args.chains)]#fut_Y.shape[-1])]
@@ -239,7 +239,7 @@ def on_train(training_data: pd.DataFrame, args: Config= Config()) -> tuple:
             )
             mu_past = pt.exp(log_mu_past)
 
-            y_like = pm.NegativeBinomial(
+            pm.NegativeBinomial(
                 f"y_{h}", mu=mu_past[:T-h], alpha=alpha, observed=y_const[h:])
 
         idata = pm.sample(
@@ -356,11 +356,11 @@ def new_predict(model_and_data, args: Config):
         vs.append(posterior[f'log_mu_past_{h}'].values[..., [-1], :]) #Last time point
     log_mu_future = np.concatenate(vs, axis=-2)
     alpha = posterior['alpha'].values[..., None, :]
-    with pm.Model() as pred_model:
+    with pm.Model():
         # Get parameter values from posterior
 
         mu_future = pt.exp(log_mu_future)
-        y_fut = pm.NegativeBinomial("y_fut",
+        pm.NegativeBinomial("y_fut",
                                     mu=mu_future,
                                     alpha=alpha)
 
@@ -404,7 +404,7 @@ def on_predict(model_and_data: tuple, historic_data: pd.DataFrame, args: Config=
     log_pop_offset_future = np.tile(log_pop_offset_extended[-1:, :], (H, 1))  # (H, L)
 
     # Create a new model for prediction to avoid variable name conflicts
-    with pm.Model() as pred_model:
+    with pm.Model():
         # Get parameter values from posterior
         intercept_val = idata.posterior["intercept"].mean(dim=["chain", "draw"]).values
         sigma_rw_val = idata.posterior["sigma_rw"].mean(dim=["chain", "draw"]).values
@@ -467,7 +467,7 @@ def on_predict(model_and_data: tuple, historic_data: pd.DataFrame, args: Config=
         # Add population offset to future predictionsw
         log_mu_future = linfut + seasonal_effects_fut + location_effects_fut + u_fut_seq + pt.as_tensor_variable(log_pop_offset_future)
         mu_future = pt.exp(log_mu_future)
-        y_fut = pm.NegativeBinomial(f"y_fut_{unique_id}", mu=mu_future, alpha=alpha_val)
+        pm.NegativeBinomial(f"y_fut_{unique_id}", mu=mu_future, alpha=alpha_val)
 
         # Sample from the prediction model
         ppc = pm.sample_prior_predictive(
@@ -596,9 +596,9 @@ class FileSet(pydantic.BaseModel):
 @pytest.mark.parametrize("folder_name", ['test_data', 'test_data2'])
 def test(folder_name):
     fileset = FileSet(
-        train_data=('%s/training_data.csv' % folder_name),
-        historic_data=('%s/historic_data.csv' % folder_name),
-        future_data=('%s/future_data.csv' % folder_name),
+        train_data=(f'{folder_name}/training_data.csv'),
+        historic_data=(f'{folder_name}/historic_data.csv'),
+        future_data=(f'{folder_name}/future_data.csv'),
     )
     config_filename = 'test_config.yaml'
     train(fileset.train_data,

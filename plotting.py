@@ -308,7 +308,7 @@ def plot_all_parameter_samples(idata, config: 'Config', output_file: str):
         # Add text box with summary statistics
         stats_text = f'Mean: {mean_val:.3f}\nMedian: {median_val:.3f}\n95% CI: [{q025:.3f}, {q975:.3f}]'
         ax_posterior.text(0.02, 0.98, stats_text, transform=ax_posterior.transAxes,
-                          verticalalignment='top', bbox=dict(boxstyle='round', facecolor='white', alpha=0.8),
+                          verticalalignment='top', bbox={'boxstyle': 'round', 'facecolor': 'white', 'alpha': 0.8},
                           fontsize=8)
 
     plt.suptitle('Model Parameter Sampling Diagnostics', fontsize=14, fontweight='bold', y=0.98)
@@ -604,8 +604,8 @@ def plot_log_space(idata):
     log_mu_past = posterior['log_mu_past']
     y = idata.observed_data['y'].values
     median = log_mu_past.median(dim=['chain', 'draw']).values
-    q_high = log_mu_past.quantile(0.90, dim=["chain", "draw"]).values
-    q_low = log_mu_past.quantile(0.10, dim=["chain", "draw"]).values
+    log_mu_past.quantile(0.90, dim=["chain", "draw"]).values
+    log_mu_past.quantile(0.10, dim=["chain", "draw"]).values
     n_locations = median.shape[-1]
     for i in range(n_locations):
         plt.plot(median[..., i], color='r')

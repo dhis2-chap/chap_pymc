@@ -107,7 +107,7 @@ class SeasonalRegression:
         self._seasonal_data = creator.seasonal_data
 
         coords = creator.seasonal_data.coords() | {'feature': [f'temp_lag{self._lag-i}'for i in range(self._lag)]}
-        with pm.Model(coords=coords) as model:
+        with pm.Model(coords=coords):
             DimensionalModel(self._model_params).build_model(model_input)
             # define_stable_model(model_input, self._model_params)
             #graph = pm.model_to_graphviz(model)
@@ -126,7 +126,7 @@ class SeasonalRegression:
     def predict_advi(self, training_data: pd.DataFrame, n_samples=1000, return_approx=False):
         model_input = self.create_model_input(training_data)
 
-        with pm.Model() as model:
+        with pm.Model():
             self.define_stable_model(model_input)
             approx = pm.fit(n=self._inference_params.n_iterations, method='advi')
 
@@ -161,7 +161,7 @@ class SeasonalRegression:
 
     def plot_model_input(self, model_input: FullModelInput):
         L, Y, M = model_input.y.shape
-        for loc in range(L):
+        for _loc in range(L):
             ...
 
     def define_model(self, model_input: FullModelInput) -> int:
@@ -271,7 +271,7 @@ class SeasonalRegression:
             location_name = f'Location {loc}'
 
             # Get median values for this location and specified year
-            eta_val = median_dict['eta'][loc, plot_year_idx, 0]
+            median_dict['eta'][loc, plot_year_idx, 0]
             sampled_eta_val = median_dict['sampled_eta'][loc, plot_year_idx, 0]
             scale_val = median_dict['scale'][loc, plot_year_idx, 0]
             mu_val = sampled_eta_val  # mu is sampled_eta for the last dimension
@@ -284,7 +284,7 @@ class SeasonalRegression:
             transformed_pattern = median_dict['transformed_pattern'][loc, plot_year_idx, :]
             epsilon = median_dict['epsilon'][loc, plot_year_idx, :]
             y_obs = training_data.y[loc, plot_year_idx, :]
-            seasonal_pattern_plus_sampled_eta = training_data.seasonal_pattern[loc, 0, :] + sampled_eta_val
+            training_data.seasonal_pattern[loc, 0, :] + sampled_eta_val
             transformed_minus_epsilon = transformed_pattern - epsilon
 
             # Add monthly varying variables
@@ -553,7 +553,7 @@ def test_nepal(nepal_data: pd.DataFrame):
                                model_params=ModelParams(errors='rw', use_mixture=True),
                                lag=3, prediction_length=3)
 
-    preds = model.predict_with_dims(nepal_data)
+    model.predict_with_dims(nepal_data)
     #for plot in model.explanation_plots:
     #    plot.show()
 
@@ -577,7 +577,7 @@ def test_advi(large_df: pd.DataFrame):
                                model_params=ModelParams(errors='rw'),
                                lag=3, prediction_length=3)
 
-    preds = model.predict_with_dims(large_df, n_samples=100)
+    model.predict_with_dims(large_df, n_samples=100)
     #model.plot_prediction(approx, large_df, 'advi_prediction_plot.png')
     #for plot in model.explanation_plots:
     #    plot.show()
@@ -609,7 +609,7 @@ def model_input():
 def test_anti_pattern(model_input):
     params = InferenceParams(chains=2, draws=200, tune=500)
     reg = SeasonalRegression(inference_params=params, lag=3, prediction_length=3)
-    with pm.Model() as model:
+    with pm.Model():
         reg.define_stable_model(model_input)
         idata = pm.sample(**params.model_dump())
     posterior = idata.posterior
@@ -671,7 +671,7 @@ def explain(csv_file: str, output_folder: str = '.', inference_params: Inference
     from chap_core.assessment.dataset_splitting import train_test_generator
     dataset = chap_core.data.DataSet.from_csv(csv_file)
     train_data, test_instances  = train_test_generator(dataset, prediction_length=3, n_test_sets=12)
-    for t, (historic, future, truth) in enumerate(test_instances):
+    for t, (historic, _future, _truth) in enumerate(test_instances):
         df = historic.to_pandas()
         df.time_period = df.time_period.astype(str)
         model = SeasonalRegression(inference_params=inference_params)

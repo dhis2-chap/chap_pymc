@@ -62,8 +62,8 @@ def create_data_arrays(df: pd.DataFrame, horizon=3):
         plt.show()
         #plt.plot(stds)
         #plt.show()
-        h = means + stds
-        l = means - stds
+        means + stds
+        means - stds
         # plt.plot(h, c='k', ls='--')
         # plt.plot(means, c='k', ls='--')
         # plt.plot(l, c='k', ls='--')
@@ -76,14 +76,14 @@ def create_data_arrays(df: pd.DataFrame, horizon=3):
 
 def chatgpted_model(full_year_data, missing:int=3):
     L, Y, M = full_year_data.shape
-    seen_months = M - missing
+    M - missing
 
 
 
 def make_full_model(full_year_data: 'loc, year, month', missing: int=3):
     L, Y, M = full_year_data.shape
     seen_months = M - missing
-    with pm.Model() as model:
+    with pm.Model():
         a = pm.Normal('a', mu=0, sigma=10, shape=(L, Y, 1))
         b = pm.Normal('b', mu=0, sigma=10, shape=(L, Y, 1))
         c = pm.Normal('c', mu=0, sigma=10, shape=(L, Y, 1))
@@ -91,13 +91,13 @@ def make_full_model(full_year_data: 'loc, year, month', missing: int=3):
         #eta = pm.Deterministic('eta', a*t**2+b*t+c)
         all_mu = pm.Deterministic('all_mu', a*t**2+b*t+c)
         if False:
-            yearly_offsets = pm.Normal('yearly_offsets', mu=0, sigma=2, shape=(L, Y, 1))
-            yearly_scales = pm.HalfNormal('yearly_scales', sigma=2,
+            pm.Normal('yearly_offsets', mu=0, sigma=2, shape=(L, Y, 1))
+            pm.HalfNormal('yearly_scales', sigma=2,
                                     shape=(L, Y, 1))
             monthly_shape_raw = pm.Normal('monthly_shape_raw',
                                       mu=0, sigma=2, shape=(L, 1, M))
 
-            monthly_shape = pm.Deterministic('monthly_shape', monthly_shape_raw-monthly_shape_raw.mean(axis=-1, keepdims=True))
+            pm.Deterministic('monthly_shape', monthly_shape_raw-monthly_shape_raw.mean(axis=-1, keepdims=True))
 
         # means are a combination of withinyear monthly shape and offset and scale per year
         # all_mu = pm.Deterministic('all_mu',
@@ -134,10 +134,11 @@ def make_model(all_means: 'L, M', all_stds, full_year_data: 'loc, year, month', 
     L, Y, M = full_year_data.shape
     train_data = full_year_data[:, :-1, :]
     test_data = full_year_data[:, -1:, :]
-    repeat_year = lambda a: np.repeat(a, Y, axis=0).reshape(L,Y,M)
+    def repeat_year(a):
+        return np.repeat(a, Y, axis=0).reshape(L,Y,M)
     all_means = repeat_year(all_means)
     all_stds = repeat_year(all_stds)
-    with pm.Model() as model:
+    with pm.Model():
         sigma = pm.HalfNormal('sigma', 3.0)
         mu = pm.Normal('mu', 0.0, 10.)
         yearly_mean = pm.Normal('yearly_mean', mu=mu,sigma=10, shape=(L, Y,1))
