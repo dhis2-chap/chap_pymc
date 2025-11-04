@@ -66,10 +66,10 @@ class FourierParametrization:
         missing_mask = y.isnull()
         a_mu = pmd.Normal('a_mu', mu=0, sigma=1, dims=('location', 'harmonic'))
         #a_mu = self._get_mv_harmonic('harmonic', pm.modelcontext(None).coords)
-        ha_sigma = pmd.HalfNormal('harmonic_a_sigma', sigma=1, dims=('harmonic',))
-        a_sigma = pmd.HalfNormal('a_sigma', sigma=ha_sigma, dims=('harmonic', 'location'))
+        # ha_sigma = pmd.HalfNormal('harmonic_a_sigma', sigma=1, dims=('harmonic',))
+        a_sigma = pmd.HalfNormal('a_sigma', sigma=2., dims=('harmonic', 'location'))
         #A = a_mu + self._get_mv_harmonic('harmonic', pm.modelcontext().coords)
-        A = pmd.Normal('A', mu=0, sigma=a_sigma, dims=('location', 'year', 'harmonic'))+a_mu
+        A = pmd.Normal('A', mu=0, sigma=a_sigma, dims=('location', 'year', 'harmonic')) + a_mu
         # pm.LKJCholeskyCov
         # pmd.MvNormal
         #A = pm.MvNormal
