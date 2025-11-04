@@ -45,9 +45,9 @@ class FullModelInput(ModelInputBase):
 @dataclasses.dataclass
 class FourierModelInput(ModelInputBase):
     added_last_year: bool = False
-    prev_year_end: xarray.DataArray = None  # (location, year)
-    y_mean: xarray.DataArray = None
-    y_std: xarray.DataArray = None
+    prev_year_end: xarray.DataArray | None = None  # (location, year)
+    y_mean: xarray.DataArray | None = None
+    y_std: xarray.DataArray | None = None
 
 class FourierInputCreator:
     """
@@ -76,7 +76,13 @@ class FourierInputCreator:
         """
         self._prediction_length = prediction_length
         self._lag = lag
-        self.seasonal_data: SeasonalTransform | None = None  # For backward compatibility
+        self._seasonal_data: SeasonalTransform | None = None  # For backward compatibility
+
+    @property
+    def seasonal_data(self) -> SeasonalTransform:
+        if self._seasonal_data is None:
+            raise ValueError("seasonal_data has not been set yet.")
+        return self._seasonal_data
 
     def create_model_input(self, training_data: pd.DataFrame) -> FourierModelInput:
         """
@@ -99,7 +105,7 @@ class FourierInputCreator:
                 min_post_months=self._prediction_length
             )
         )
-        self.seasonal_data = seasonal_data  # Store for backward compatibility
+        self._seasonal_data = seasonal_data  # Store for backward compatibility
         last_month = seasonal_data.last_seasonal_month_raw
         add_last_year = last_month +1+ self._prediction_length > MONTHS_PER_YEAR
 
@@ -158,10 +164,10 @@ class FourierInputCreator:
         return X
 
 
-def test_fourier_input_creator(simple_df) -> None:
+def test_fourier_input_creator(simple_df: tuple[pd.DataFrame, int]) -> None:
     """Test that FourierInputCreator produces xarray DataArrays with correct shapes and coordinates."""
     # Create synthetic data
-    df, n_locations = simpled_df
+    df, n_locations = simple_df
 
     # Create model input
     creator = FourierInputCreator(prediction_length=3, lag=3)

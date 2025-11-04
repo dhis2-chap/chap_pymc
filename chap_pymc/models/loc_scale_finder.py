@@ -43,7 +43,7 @@ class LocScalePatternFinder:
 
         for loc_idx in range(L):
             # Define objective function for this location
-            def objective(params, idx=loc_idx):
+            def objective(params: np.ndarray, idx: int = loc_idx) -> float:
                 # Unpack parameters: [loc_0, loc_1, ..., loc_{Y-1}, scale_0, scale_1, ..., scale_{Y-1}, pattern_0, pattern_1, ..., pattern_{M-1}]
                 loc_l = params[:Y]
                 scale_l = params[Y:2*Y]
@@ -53,7 +53,7 @@ class LocScalePatternFinder:
                 predicted = loc_l[:, np.newaxis] + scale_l[:, np.newaxis] * pattern_l[np.newaxis, :]
 
                 # Compute MSE
-                mse = np.mean((self._data[idx] - predicted) ** 2)
+                mse: float = np.mean((self._data[idx] - predicted) ** 2)
                 return mse
 
             # Initial parameter vector for this location
@@ -94,7 +94,8 @@ def data() -> np.ndarray:
     ])
     eta = patterns[:, np.newaxis, :]*scales[..., np.newaxis] + locs[..., np.newaxis]
     noise = np.random.rand(n_loc*n_years*n_months).reshape((n_loc, n_years, n_months))
-    return eta+noise
+    result: np.ndarray = eta + noise
+    return result
 
 def test_loc_scale_pattern_finder(data: np.ndarray) -> None:
     finder = LocScalePatternFinder(data)

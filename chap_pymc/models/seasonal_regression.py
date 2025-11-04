@@ -6,21 +6,19 @@ import cyclopts
 import numpy as np
 import pandas as pd
 import pymc as pm
+import xarray
 
 from chap_pymc.models.model_with_dimensions import DimensionalModel
 from chap_pymc.models.model_with_dimensions import ModelParams as ModelDefParams
 
-try:
-    import altair as alt
-    import matplotlib.pyplot as plt
+
+import altair as alt
+import matplotlib.pyplot as plt
     # alt.data_transformers.enable("vegafusion")
-except ImportError:
-    plt = None
-    alt = None
 import pytest
 
 from chap_pymc.inference_params import InferenceParams
-from chap_pymc.model_input_creator import FullModelInput, ModelInputCreator
+from chap_pymc.model_input_creator import FullModelInput, ModelInputCreator, FourierModelInput
 from chap_pymc.seasonal_transform import SeasonalTransform
 
 TESTING=False
@@ -74,7 +72,7 @@ class SeasonalRegression:
         self._lag = lag
         self._inference_params = inference_params
         self._model_params = model_params
-        self._explanation_plots = []
+        self._explanation_plots: list[Any] = []
 
     @property
     def explanation_plots(self) -> list[Any]:
@@ -85,9 +83,10 @@ class SeasonalRegression:
         with pm.Model() as _:
             self.define_stable_model(model_input)
             idata = pm.sample(**self._inference_params.model_dump())
-        if TESTING and False:
-            self.plot_effect_trace(idata)
-            self.pyplot_last_year(model_input, idata)
+        # Unreachable code commented out:
+        # if TESTING and False:
+        #     self.plot_effect_trace(idata)
+        #     self.pyplot_last_year(model_input, idata)
         last_month = model_input.last_month
         posterior_samples = idata.posterior['transformed_samples'].stack(samples=("chain", "draw")).values[:, -1, last_month+1:last_month+self._prediction_length+1]
         preds = np.expm1(posterior_samples)
@@ -101,10 +100,8 @@ class SeasonalRegression:
         creator = ModelInputCreator(
             prediction_length=self._prediction_length,
             lag=self._lag,
-            mask_empty_seasons=self._model_params.mask_empty_seasons
         )
         model_input = creator.create_model_input(training_data)
-        model_input = creator.to_xarray(model_input)
         self._seasonal_data = creator.seasonal_data
 
         coords = creator.seasonal_data.coords() | {'feature': [f'temp_lag{self._lag-i}'for i in range(self._lag)]}
@@ -150,11 +147,10 @@ class SeasonalRegression:
         else:
             return create_output(training_data, preds)
 
-    def create_model_input(self, training_data: pd.DataFrame) -> FullModelInput:
+    def create_model_input(self, training_data: pd.DataFrame) -> FourierModelInput:
         creator = ModelInputCreator(
             prediction_length=self._prediction_length,
             lag=self._lag,
-            mask_empty_seasons=self._model_params.mask_empty_seasons
         )
         model_input = creator.create_model_input(training_data)
         self._seasonal_data = creator.seasonal_data
@@ -599,9 +595,14 @@ def test_viet_begin_season(viet_begin_season: pd.DataFrame) -> None:
 def model_input() -> FullModelInput:
     L, Y, M = 1, 2, 12
     months = np.array(L * [[np.arange(M)]])
+    X = xarray.DataArray(np.random.rand(L, Y, 3), dims=['location', 'season', 'feature'])
+    y = xarray.DataArray(
+        np.sin(2 * np.pi * months // 12) * np.array([[1], [-1]]),
+        dims=['location', 'season', 'month'])
+
     return FullModelInput(
-        X=np.random.rand(L, Y, 3),
-        y=np.sin(2 * np.pi * months // 12) * np.array([[1], [-1]]),
+        X=X,
+        y=y,
         seasonal_pattern=np.sin(2 * np.pi * months // 12),
         seasonal_errors=np.ones((L, 1, M)),
         last_month=3
@@ -655,15 +656,20 @@ app = cyclopts.App()
 def predict(csv_file: str) -> None:
     df = pd.read_csv(csv_file)
     model = SeasonalRegression()
-    if False:
-        preds, idata = model.predict(df, return_idata=True)
-    else:
-        preds = model.predict_advi(df, return_approx=False, n_samples=1000)
+    # Using ADVI prediction (commented out unreachable code):
+    # if False:
+    #     preds, idata = model.predict(df, return_idata=True)
+    # else:
+    result = model.predict_advi(df, return_approx=False, n_samples=1000)
     # save data from idata
     #idata.to_netcdf('seasonal_regression_trace.nc')
     #model.plot_trace(idata, 'seasonal_regression_trace.png')
 
     #model.plot_prediction(idata, df, 'seasonal_regression_predictions.png')
+    if isinstance(result, tuple):
+        preds = result[0]
+    else:
+        preds = result
     preds.to_csv('seasonal_regression_output.csv', index=False)
 
 @app.command()

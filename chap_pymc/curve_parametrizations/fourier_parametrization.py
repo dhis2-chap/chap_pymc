@@ -33,14 +33,14 @@ class FourierParametrization:
         if self.hyper_params.do_mixture:
             # Continuous mixture weight per location-year: 0 < z < 1
             # z=1 means full seasonal pattern, z=0 means flat line at 0
-            alpha, beta = self.hyper_params.mixture_weight_prior
+            alpha_val, beta_val = self.hyper_params.mixture_weight_prior
 
-            alpha = np.full(n_years, alpha)
-            beta = np.full(n_years, beta)
+            alpha_arr = np.full(n_years, alpha_val)
+            beta_arr = np.full(n_years, beta_val)
 
-            alpha[-1] = 15.0  # Strong prior towards 1 in last year
-            beta[-1] = 1.0
-            alpha, beta = (as_xtensor(v, dims=('year',)) for v in (alpha, beta))
+            alpha_arr[-1] = 15.0  # Strong prior towards 1 in last year
+            beta_arr[-1] = 1.0
+            alpha, beta = (as_xtensor(v, dims=('year',)) for v in (alpha_arr, beta_arr))
 
             z = pmd.Beta('mixture_weight',
                          alpha=alpha, beta=beta, dims=('location', 'year'))
@@ -59,8 +59,6 @@ class FourierParametrization:
         h_mu = pmd.Normal('h_{dim}_mu', mu=0, sigma=1, dims=(dim,))
         mv = pmd.MvNormal(f'{dim}_mu', mu=h_mu, chol=chol, core_dims=(dim, f'{dim}_corr'), dims=('location', dim))
         return mv
-        mv = pm.MvNormal(f'{dim}_mu', np.zeros(n), chol=cholesky, shape=(len(coords['location']), n), dims=('location', dim))
-        return pmd.as_xtensor(mv, dims=('location', dim))
 
     def get_model(self, y: xarray.DataArray, A_offset: float | Any = 0.0) -> None:
         missing_mask = y.isnull()
@@ -95,7 +93,7 @@ class FourierParametrization:
         #pm.Normal('y_obs', mu=mu.values, sigma=sigma.values[:, None, None], observed=y, dims=('location', 'year', 'month'))
 
 
-    def _ar_effect(self, y) -> Any:
+    def _ar_effect(self, y: xarray.DataArray) -> Any:
         L, Y, M = y.shape
         ar_sigma = pm.HalfNormal('ar_sigma', sigma=0.1, dims='location')
 
@@ -127,7 +125,7 @@ class FourierParametrization:
         result_tensor = pt.tensordot(X.values, beta.values, axes=[[2], [0]])
         return pmd.Deterministic('linear_effect', result_tensor, dims=('location', 'year', 'harmonic'))
 
-    def extract_predictions(self, posterior, model_input: FourierModelInput) -> xarray.DataArray:
+    def extract_predictions(self, posterior: Any, model_input: FourierModelInput) -> xarray.DataArray:
         """
         Extract posterior samples for predicted (unobserved) y values in the last year.
 

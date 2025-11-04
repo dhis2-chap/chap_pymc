@@ -24,7 +24,7 @@ def large_df(data_path) -> pd.DataFrame:
     return pd.read_csv(p)
 
 @pytest.fixture
-def thailand_ds(data_path) -> pd.DataFrame:
+def thailand_ds(data_path) -> DataSet:
     return DataSet.from_csv(data_path / 'thailand.csv')
 
 @pytest.fixture

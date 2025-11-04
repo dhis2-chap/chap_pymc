@@ -80,18 +80,17 @@ class SeasonalTransform:
         self._remove_first_year = self.first_seasonal_month > 0
 
     def _find_min_month(self) -> int:
-        means = [(month, group['y'].mean()) for month, group in self._df.groupby('month')]
+        means: list[tuple[int, float]] = [(month, group['y'].mean()) for month, group in self._df.groupby('month')]
         min_month, val  = min(means, key=lambda x: x[1])
         max_month, val = max(means, key=lambda x: x[1])
         print(f"min_month: {min_month}, max_month: {max_month}")
 
 
-        med = (min_month+max_month-6)/2
-        med = int(med-1) % MONTHS_PER_YEAR + 1
         if self._params.alignment == 'min':
             return min_month
-        else:
-            return med
+        med: int = (min_month + max_month - 6) / 2  # type: ignore
+        med = int(med - 1) % MONTHS_PER_YEAR + 1
+        return med
 
 
     def get_df(self, feature_name: str, start_year: int | None = None) -> pd.DataFrame:
