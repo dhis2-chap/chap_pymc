@@ -1,5 +1,6 @@
 """Tests for SeasonalFourierRegression"""
 import pandas as pd
+import pytest
 
 from chap_pymc.curve_parametrizations.fourier_parametrization import (
     FourierHyperparameters,
@@ -42,6 +43,7 @@ def test_seasonal_fourier_regression_predict(viet_begin_season):
     print("\nSample predictions for first location:")
     print(predictions[predictions['location'] == predictions['location'].iloc[0]].head())
 
+@pytest.mark.slow
 def test_viet_full_year(viet_full_year):
     for i, (viet_instance, t) in enumerate(viet_full_year):
         if i<7:
@@ -77,6 +79,7 @@ def test_seasonal_fourier_regression_advi(viet_begin_season, truth=None):
     print(f"\nADVI Predictions shape: {predictions.shape}")
 
 
+@pytest.mark.slow
 def test_compare_with_seasonal_regression(viet_begin_season):
     """Compare SeasonalFourierRegression with original SeasonalRegression"""
     from chap_pymc.models.seasonal_regression import SeasonalRegression

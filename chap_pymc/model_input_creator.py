@@ -4,6 +4,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+import pytest
 import xarray
 
 from chap_pymc.seasonal_transform import SeasonalTransform, TransformParameters
@@ -157,28 +158,10 @@ class FourierInputCreator:
         return X
 
 
-def test_fourier_input_creator():
+def test_fourier_input_creator(simple_df):
     """Test that FourierInputCreator produces xarray DataArrays with correct shapes and coordinates."""
     # Create synthetic data
-    locations = ['LocationA', 'LocationB']
-    n_locations = len(locations)
-    n_months = 36  # 3 years of data
-    dates = pd.date_range('2020-01', periods=n_months, freq='MS')
-    time_periods = pd.date_range('2020-01', periods=n_months, freq='MS')
-    data = []
-    for loc in locations:
-        for i, date in enumerate(dates):
-            time_period = date.strftime('%Y-%m')
-            disease_cases = np.sin(2 * np.pi * i / MONTHS_PER_YEAR) + 5 + np.random.randn() * 0.1
-            mean_temperature = 20 + 10 * np.sin(2 * np.pi * i / MONTHS_PER_YEAR) + np.random.randn()
-            data.append({
-                'location': loc,
-                'time_period': time_period,
-                'disease_cases': max(0, disease_cases),
-                'mean_temperature': mean_temperature
-            })
-
-    df = pd.DataFrame(data)
+    df, n_locations = simpled_df
 
     # Create model input
     creator = FourierInputCreator(prediction_length=3, lag=3)
@@ -211,6 +194,28 @@ def test_fourier_input_creator():
     assert set(coords.keys()) == {'location', 'year', 'month', 'feature'}
 
     print("✓ FourierInputCreator test passed")
+
+@pytest.fixture
+def simpled_df() -> tuple[pd.DataFrame, int]:
+    locations = ['LocationA', 'LocationB']
+    n_locations = len(locations)
+    n_months = 36  # 3 years of data
+    dates = pd.date_range('2020-01', periods=n_months, freq='MS')
+    time_periods = [date.strftime('%Y-%m') for date in dates]
+    for loc in locations:
+        for i, time_period in enumerate(time_periods):
+            # time_period = date.strftime('%Y-%m')
+            disease_cases = np.sin(2 * np.pi * i / MONTHS_PER_YEAR) + 5 + np.random.randn() * 0.1
+            mean_temperature = 20 + 10 * np.sin(2 * np.pi * i / MONTHS_PER_YEAR) + np.random.randn()
+            data.append({
+                'location': loc,
+                'time_period': time_period,
+                'disease_cases': max(0, disease_cases),
+                'mean_temperature': mean_temperature
+            })
+
+    df = pd.DataFrame(data)
+    return df, n_locations
 
 
 # Backward compatibility alias

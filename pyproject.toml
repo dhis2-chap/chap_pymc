@@ -85,9 +85,11 @@ exclude = ["tests*", "venv*", "__pycache__*", "*.egg-info*"]
 testpaths = ["."]
 python_files = ["test_*.py", "*_test.py", "example.py"]
 python_functions = ["test_*"]
-addopts = "-v --tb=short"
+addopts = "-v --tb=short -m 'not slow'"
+timeout = 10
 markers = [
     "parametrize: marks tests as parametrized",
+    "slow: marks tests as slow (deselected by default)",
 ]
 
 [tool.black]
@@ -155,3 +157,8 @@ module = [
     "cyclopts.*",
 ]
 ignore_missing_imports = true
+
+[dependency-groups]
+dev = [
+    "pytest-timeout>=2.4.0",
+]

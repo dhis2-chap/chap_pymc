@@ -119,6 +119,7 @@ def nepal_model_input(nepal_data):
     model_input = creator.create_model_input(nepal_data)
     return creator.to_xarray(model_input)
 
+@pytest.mark.slow
 def test_nepal_regresion(nepal_data):
     fourier_regression = SeasonalFourierRegression(
         prediction_length=3,
@@ -135,6 +136,7 @@ def test_nepal_regresion(nepal_data):
     # Create plot using plotting function
     plot_vietnam_faceted_predictions(fourier_regression.model_input.y, mu_mean, mu_lower, mu_upper, fourier_regression.stored_coords, output_file='nepal_fourier_fit.png')
 
+@pytest.mark.slow
 def test_full_vietnam_regression(viet_full_year):
     for i, (viet_instance, t) in enumerate(viet_full_year):
         if i<7:
@@ -143,6 +145,7 @@ def test_full_vietnam_regression(viet_full_year):
         model_input = creator.create_model_input(viet_instance)
         test_vietnam_regression(model_input, viet_idata_path=f'viet_{i}.nc', i=i)
 
+@pytest.mark.slow
 def test_vietnam_regression(viet_model_input,  viet_idata_path=None, i=0):
     viet_coords= viet_model_input.coords() | {'harmonic': np.arange(0, 4)}  # Add harmonic coordinate (0=baseline, 1-3=harmonics)
     n_harmonics = len(viet_coords['harmonic']) - 1  # Subtract 1 for baseline
@@ -198,7 +201,7 @@ def debug_model() -> SeasonalFourierRegression:
         inference_params=InferenceParams(method='advi', n_iterations=1_000, progressbar=True)
     )
 
-
+@pytest.mark.skip(reason="Requires viet_idata_path fixture")
 def test_extract_samples(viet_idata_path):
     """Test that we can reload idata and extract samples"""
     idata = az.from_netcdf(viet_idata_path)
@@ -211,6 +214,7 @@ def test_extract_samples(viet_idata_path):
     assert slope_samples.shape[3] == 4  # Harmonics (including baseline)
 
 
+@pytest.mark.skip(reason="Requires viet_idata_path fixture")
 def test_extract_predictions(viet_idata_path, viet_model_input):
     """Test extracting prediction samples from last year"""
     idata = az.from_netcdf(viet_idata_path)
@@ -245,6 +249,7 @@ def test_extract_predictions(viet_idata_path, viet_model_input):
     print(f"Sample predictions for first location:\n{pred_mean.isel(location=0).values}")
 
 
+@pytest.mark.slow
 def test_vietnam_fourier_fit(vietnam_y_xarray):
     """Fit Fourier parametrization to Vietnam dataset and plot results"""
 
@@ -275,6 +280,7 @@ def test_vietnam_fourier_fit(vietnam_y_xarray):
 
 
 
+@pytest.mark.slow
 def test_vietnam_parameter_correlations(viet_model_input):
     """Fit Fourier model and plot parameter-feature correlations"""
     from chap_pymc.curve_parametrizations.fourier_parametrization_plots import (
