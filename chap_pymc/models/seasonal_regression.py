@@ -447,10 +447,10 @@ class SeasonalRegression:
         for location in range(L):
             pred = med[location, -1]
             u = upper[location, -1]
-            l = lower[location, -1]
+            lo = lower[location, -1]
             plt.plot(pred, label='med', color='blue')
             plt.plot(u, label='upper', color= 'blue')
-            plt.plot(l, label='lower', color='blue')
+            plt.plot(lo, label='lower', color='blue')
             plt.plot(pre_noise[location, -1], label=f'Prenoise {location+1}', color='green')
             plt.plot(model_input.seasonal_pattern[location,0])
             plt.plot(model_input.y[location, -1], color='red')

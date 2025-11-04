@@ -80,7 +80,13 @@ def chatgpted_model(full_year_data, missing:int=3):
 
 
 
-def make_full_model(full_year_data: 'loc, year, month', missing: int=3):
+def make_full_model(full_year_data, missing: int=3):
+    """Create model for full year data.
+
+    Args:
+        full_year_data: Array with shape (loc, year, month)
+        missing: Number of missing months
+    """
     L, Y, M = full_year_data.shape
     seen_months = M - missing
     with pm.Model():
@@ -130,7 +136,15 @@ def make_full_model(full_year_data: 'loc, year, month', missing: int=3):
     return idata
 
 
-def make_model(all_means: 'L, M', all_stds, full_year_data: 'loc, year, month', missing:int=0):
+def make_model(all_means, all_stds, full_year_data, missing:int=0):
+    """Create model with means and stds.
+
+    Args:
+        all_means: Array with shape (L, M)
+        all_stds: Standard deviations
+        full_year_data: Array with shape (loc, year, month)
+        missing: Number of missing values
+    """
     L, Y, M = full_year_data.shape
     train_data = full_year_data[:, :-1, :]
     test_data = full_year_data[:, -1:, :]

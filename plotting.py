@@ -1,11 +1,15 @@
 import pickle
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import arviz as az
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import pytest
+
+if TYPE_CHECKING:
+    from example import Config
 
 
 def plot_seasonal_effects(idata, locations, config: 'Config', output_file: str):
@@ -604,8 +608,8 @@ def plot_log_space(idata):
     log_mu_past = posterior['log_mu_past']
     y = idata.observed_data['y'].values
     median = log_mu_past.median(dim=['chain', 'draw']).values
-    log_mu_past.quantile(0.90, dim=["chain", "draw"]).values
-    log_mu_past.quantile(0.10, dim=["chain", "draw"]).values
+    # q90 = log_mu_past.quantile(0.90, dim=["chain", "draw"]).values
+    # q10 = log_mu_past.quantile(0.10, dim=["chain", "draw"]).values
     n_locations = median.shape[-1]
     for i in range(n_locations):
         plt.plot(median[..., i], color='r')

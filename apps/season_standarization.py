@@ -486,7 +486,7 @@ def analyze_data(df: pd.DataFrame):
         ]
 
         # Create scatter plots with faceting by location
-        for i, (x_param, y_param, title) in enumerate(param_combinations):
+        for _i, (x_param, y_param, title) in enumerate(param_combinations):
             scatter_chart = alt.Chart(params_df_clean).mark_circle(
                 size=100, opacity=0.7, color='steelblue'
             ).encode(

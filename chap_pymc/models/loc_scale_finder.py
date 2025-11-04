@@ -32,18 +32,18 @@ class LocScalePatternFinder:
         pattern_init = np.zeros((L, M))
 
         # Initialize pattern as deviation from yearly means
-        for l in range(L):
-            centered = self._data[l] - loc_init[l][:, np.newaxis]
-            pattern_init[l] = np.mean(centered, axis=0)
+        for loc_idx in range(L):
+            centered = self._data[loc_idx] - loc_init[loc_idx][:, np.newaxis]
+            pattern_init[loc_idx] = np.mean(centered, axis=0)
 
         # Optimize each location separately
         loc = np.zeros((L, Y))
         scale = np.zeros((L, Y))
         pattern = np.zeros((L, M))
 
-        for l in range(L):
+        for loc_idx in range(L):
             # Define objective function for this location
-            def objective(params):
+            def objective(params, idx=loc_idx):
                 # Unpack parameters: [loc_0, loc_1, ..., loc_{Y-1}, scale_0, scale_1, ..., scale_{Y-1}, pattern_0, pattern_1, ..., pattern_{M-1}]
                 loc_l = params[:Y]
                 scale_l = params[Y:2*Y]
@@ -53,27 +53,27 @@ class LocScalePatternFinder:
                 predicted = loc_l[:, np.newaxis] + scale_l[:, np.newaxis] * pattern_l[np.newaxis, :]
 
                 # Compute MSE
-                mse = np.mean((self._data[l] - predicted) ** 2)
+                mse = np.mean((self._data[idx] - predicted) ** 2)
                 return mse
 
             # Initial parameter vector for this location
-            x0 = np.concatenate([loc_init[l], scale_init[l], pattern_init[l]])
+            x0 = np.concatenate([loc_init[loc_idx], scale_init[loc_idx], pattern_init[loc_idx]])
 
             # Optimize
             result = minimize(objective, x0, method='BFGS')
 
             # Extract optimized parameters
-            loc[l] = result.x[:Y]
-            scale[l] = result.x[Y:2*Y]
-            pattern[l] = result.x[2*Y:]
+            loc[loc_idx] = result.x[:Y]
+            scale[loc_idx] = result.x[Y:2*Y]
+            pattern[loc_idx] = result.x[2*Y:]
 
         return OutbreakParams(loc=loc, scale=scale, pattern=pattern)
 
     def predict(self, params: OutbreakParams) -> np.ndarray:
         L, Y, M = self._data.shape
         predictions = np.zeros((L, Y, M))
-        for l in range(L):
-            predictions[l] = params.loc[l][:, np.newaxis] + params.scale[l][:, np.newaxis] * params.pattern[l][np.newaxis, :]
+        for loc_idx in range(L):
+            predictions[loc_idx] = params.loc[loc_idx][:, np.newaxis] + params.scale[loc_idx][:, np.newaxis] * params.pattern[loc_idx][np.newaxis, :]
         return predictions
 
 

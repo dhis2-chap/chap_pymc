@@ -124,9 +124,6 @@ def prepare_extended_data(data_dict, historic_data, args):
         # Get population data for the extended period
         pop_extended = to_tensor_panels(extended_panel, extended_time_idx, original_locs,
                                       args.date_col, args.loc_col, 'population')
-        # Forward fill any missing population values
-        if np.isnan(pop_extended).any():
-            pop_extended = safe_impute(pop_extended)
         log_pop_offset_extended = np.log(np.clip(pop_extended, 1.0, None))
     elif has_population:
         # No extension, use original population data
