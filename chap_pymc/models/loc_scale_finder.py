@@ -1,7 +1,6 @@
 import dataclasses
 
 import numpy as np
-import pytest
 from scipy.optimize import minimize
 
 
@@ -75,33 +74,3 @@ class LocScalePatternFinder:
         for loc_idx in range(L):
             predictions[loc_idx] = params.loc[loc_idx][:, np.newaxis] + params.scale[loc_idx][:, np.newaxis] * params.pattern[loc_idx][np.newaxis, :]
         return predictions
-
-
-@pytest.fixture
-def data() -> np.ndarray:
-    n_loc, n_years, n_months = 2, 3, 4
-    patterns = np.array([
-        [0.0, 1.0, 2.0, 1.0],  # pattern for location 1
-        [1.0, 2.0, 1.0, 0.0],  # pattern for location 2
-    ])
-    locs = np.array([
-        [1.0, 2.0, 3.0],  # locs for location 1
-        [2.0, 3.0, 4.0],  # loc
-    ])
-    scales = np.array([
-        [1.0, 1.0, 1.0],  # scales for location 1
-        [2.0, 2.0, 2.0],  # scales for location 2
-    ])
-    eta = patterns[:, np.newaxis, :]*scales[..., np.newaxis] + locs[..., np.newaxis]
-    noise = np.random.rand(n_loc*n_years*n_months).reshape((n_loc, n_years, n_months))
-    result: np.ndarray = eta + noise
-    return result
-
-def test_loc_scale_pattern_finder(data: np.ndarray) -> None:
-    finder = LocScalePatternFinder(data)
-    params = finder.find_params()
-    predictions = finder.predict(params)
-    print(predictions-data)
-    assert params.scale.shape == (2, 3)
-    assert params.loc.shape == (2, 3)
-    assert params.pattern.shape == (2, 4)

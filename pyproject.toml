@@ -82,8 +82,8 @@ exclude = ["tests*", "venv*", "__pycache__*", "*.egg-info*"]
 "*" = ["*.yaml", "*.yml"]
 
 [tool.pytest.ini_options]
-testpaths = ["."]
-python_files = ["test_*.py", "*_test.py", "example.py"]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
 python_functions = ["test_*"]
 addopts = "-v --tb=short -m 'not slow'"
 timeout = 10
@@ -149,6 +149,7 @@ warn_unused_ignores = true
 warn_no_return = true
 warn_unreachable = true
 strict_equality = true
+exclude = ["tests/", "examples/"]
 
 [[tool.mypy.overrides]]
 module = [
