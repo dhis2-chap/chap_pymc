@@ -22,26 +22,26 @@ from chap_pymc.models.seasonal_fourier_regression import SeasonalFourierRegressi
 def coords():
     return {
         'location': np.arange(3),
-        'year': np.arange(4),
-        'month': np.arange(12)
+        'epi_year': np.arange(4),
+        'epi_offset': np.arange(12)
     }
 
 
 @pytest.fixture
 def y(coords):
     '''
-    DataArray With dimensions (location, year, month)
+    DataArray With dimensions (location, epi_year, epi_offset)
     locations: 3
-    years: 4 (2020, 2021, 2022)
+    years: 4 (epi years)
     months: 12
     '''
-    L, Y, M = len(coords['location']), len(coords['year']), len(coords['month'])
+    L, Y, M = len(coords['location']), len(coords['epi_year']), len(coords['epi_offset'])
     months = np.arange(M)
     locs = np.arange(L)
     years = np.arange(Y)
     pattern = np.sin(2 * np.pi * months / 12)
     y = locs[:, None, None] + years[None, :, None] + pattern[None, None, :]
-    y = xarray.DataArray(y, dims=['location', 'year', 'month'])
+    y = xarray.DataArray(y, dims=['location', 'epi_year', 'epi_offset'])
     return y
 
 
@@ -63,12 +63,12 @@ def test_vietnam_y_xarray_fixture(vietnam_y_xarray):
     assert isinstance(vietnam_y_xarray, xarray.DataArray)
 
     # Check that it has the expected dimensions
-    assert vietnam_y_xarray.dims == ('location', 'year', 'month')
+    assert vietnam_y_xarray.dims == ('location', 'epi_year', 'epi_offset')
 
     # Check that it has coordinates
     assert 'location' in vietnam_y_xarray.coords
-    assert 'year' in vietnam_y_xarray.coords
-    assert 'month' in vietnam_y_xarray.coords
+    assert 'epi_year' in vietnam_y_xarray.coords
+    assert 'epi_offset' in vietnam_y_xarray.coords
 
     # Check shape makes sense
     assert vietnam_y_xarray.shape[2] == 12  # 12 months
@@ -76,7 +76,7 @@ def test_vietnam_y_xarray_fixture(vietnam_y_xarray):
     print(f"Vietnam y-xarray shape: {vietnam_y_xarray.shape}")
     print(f"Dimensions: {vietnam_y_xarray.dims}")
     print(f"Locations: {list(vietnam_y_xarray.coords['location'].values)}")
-    print(f"Years: {list(vietnam_y_xarray.coords['year'].values)}")
+    print(f"Years: {list(vietnam_y_xarray.coords['epi_year'].values)}")
 
 
 def test_fourier_parametrization(y, coords):

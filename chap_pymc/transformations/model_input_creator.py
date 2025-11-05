@@ -33,8 +33,8 @@ class ModelInputBase:
         """Extract PyMC coordinate dict from xarray DataArrays."""
         return {
             'location': self.y.coords['location'].values,
-            'year': self.y.coords['year'].values,
-            'month': self.y.coords['month'].values,
+            'epi_year': self.y.coords['epi_year'].values,
+            'epi_offset': self.y.coords['epi_offset'].values,
             'feature': self.X.coords['feature'].values
         }
 
@@ -147,12 +147,12 @@ class FourierInputCreator:
         # Extract numpy arrays
         X = self.create_X(seasonal_data, add_last_year=add_last_year)
         y = seasonal_data.get_xarray('y', drop_first_year=False, add_last_year=add_last_year)
-        y_mean = y.mean(dim=('year', 'month'))
-        y_std = y.std(dim=('year', 'month'))
+        y_mean = y.mean(dim=('epi_year', 'epi_offset'))
+        y_std = y.std(dim=('epi_year', 'epi_offset'))
         y = (y-y_mean)/y_std
 
-        prev_year_end = y.isel(month=-1, year=slice(None, -1))
-        y = y.isel(year=slice(1, None))  # Drop first year to align with X
+        prev_year_end = y.isel(epi_offset=-1, epi_year=slice(None, -1))
+        y = y.isel(epi_year=slice(1, None))  # Drop first year to align with X
         if X.isnull().any():
             raise AssertionError(f"NaNs found in feature array X: {X.where(X.isnull(), drop=True)}")
 
@@ -186,15 +186,15 @@ class FourierInputCreator:
         """
         last_month = seasonal_data.last_seasonal_month_raw
         X = seasonal_data.get_xarray('mean_temperature', drop_first_year=not add_last_year, add_last_year=add_last_year)
-        X = X.isel(month=slice(max(last_month-self._lag+1, 0), last_month + 1))
-        X = X.rename({'month': 'feature'})
-        std = X.std(dim=('year','feature'), skipna=True)
-        mean = X.mean(dim=('year','feature'), skipna=True)
+        X = X.isel(epi_offset=slice(max(last_month-self._lag+1, 0), last_month + 1))
+        X = X.rename({'epi_offset': 'feature'})
+        std = X.std(dim=('epi_year','feature'), skipna=True)
+        mean = X.mean(dim=('epi_year','feature'), skipna=True)
         X = (X - mean) / std
         if add_last_year:
             # Shift years up by one to drop the first incomplete year
-            X_new = X.isel(year=slice(None, -1))
-            X_new.coords['year'] = X.coords['year'][1:]
+            X_new = X.isel(epi_year=slice(None, -1))
+            X_new.coords['epi_year'] = X.coords['epi_year'][1:]
             X = X_new
         return X
 
@@ -221,18 +221,18 @@ def test_fourier_input_creator(simple_df: tuple[pd.DataFrame, int]) -> None:
     assert model_input.y.shape[2] == MONTHS_PER_YEAR  # months
 
     # Check dimensions
-    assert model_input.X.dims == ('location', 'year', 'feature')
-    assert model_input.y.dims == ('location', 'year', 'month')
+    assert model_input.X.dims == ('location', 'epi_year', 'feature')
+    assert model_input.y.dims == ('location', 'epi_year', 'epi_offset')
 
     # Check coordinates exist
     assert 'location' in model_input.X.coords
-    assert 'year' in model_input.X.coords
+    assert 'epi_year' in model_input.X.coords
     assert 'feature' in model_input.X.coords
-    assert 'month' in model_input.y.coords
+    assert 'epi_offset' in model_input.y.coords
 
     # Check coords() method
     coords = model_input.coords()
-    assert set(coords.keys()) == {'location', 'year', 'month', 'feature'}
+    assert set(coords.keys()) == {'location', 'epi_year', 'epi_offset', 'feature'}
 
     print("✓ FourierInputCreator test passed")
 

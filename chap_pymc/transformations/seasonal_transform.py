@@ -153,11 +153,11 @@ class SeasonalTransform:
 
         # Assign month names as coordinates
         data_array = data_array.assign_coords(month_name=('seasonal_month', month_labels))
-        # Rename season_idx to year for clarity
-        data_array = data_array.rename({'season_idx': 'year', 'seasonal_month': 'month'})
+        # Rename season_idx to epi_year and seasonal_month to epi_offset
+        data_array = data_array.rename({'season_idx': 'epi_year', 'seasonal_month': 'epi_offset'})
 
         if drop_first_year:
-            data_array = data_array.isel(year=slice(1, None))
+            data_array = data_array.isel(epi_year=slice(1, None))
         return data_array
 
     def _create_and_populate_base_array(self, feature_name: str) -> tuple[np.ndarray, dict[str, int]]:

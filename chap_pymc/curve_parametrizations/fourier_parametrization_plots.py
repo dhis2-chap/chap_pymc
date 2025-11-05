@@ -12,15 +12,15 @@ def plot_faceted_predictions(y, mu_mean, mu_lower, mu_upper, coords, output_file
     Create a faceted plot with rows=years, cols=locations showing observed vs predicted values.
 
     Args:
-        y: xarray.DataArray with observed data, dims=(location, year, month)
-        mu_mean: Posterior mean predictions, shape (location, year, month)
-        mu_lower: Lower credible interval, shape (location, year, month)
-        mu_upper: Upper credible interval, shape (location, year, month)
-        coords: Dictionary with 'location', 'year', 'month' coordinates
+        y: xarray.DataArray with observed data, dims=(location, epi_year, epi_offset)
+        mu_mean: Posterior mean predictions, shape (location, epi_year, epi_offset)
+        mu_lower: Lower credible interval, shape (location, epi_year, epi_offset)
+        mu_upper: Upper credible interval, shape (location, epi_year, epi_offset)
+        coords: Dictionary with 'location', 'epi_year', 'epi_offset' coordinates
         output_file: Path to save the plot
     """
     n_locations = len(coords['location'])
-    n_years = len(coords['year'])
+    n_years = len(coords['epi_year'])
 
     fig, axes = plt.subplots(n_years, n_locations, figsize=(4 * n_locations, 3 * n_years))
 
@@ -83,16 +83,16 @@ def plot_vietnam_faceted_predictions(
     Create a faceted plot for Vietnam data with rows=years, cols=locations.
 
     Args:
-        y: xarray.DataArray with observed data, dims=(location, year, month)
-        mu_mean: Posterior mean predictions, shape (location, year, month)
-        mu_lower: Lower credible interval, shape (location, year, month)
-        mu_upper: Upper credible interval, shape (location, year, month)
-        coords: Dictionary with 'location', 'year', 'month' coordinates
+        y: xarray.DataArray with observed data, dims=(location, epi_year, epi_offset)
+        mu_mean: Posterior mean predictions, shape (location, epi_year, epi_offset)
+        mu_lower: Lower credible interval, shape (location, epi_year, epi_offset)
+        mu_upper: Upper credible interval, shape (location, epi_year, epi_offset)
+        coords: Dictionary with 'location', 'epi_year', 'epi_offset' coordinates
         n_locations_to_plot: Maximum number of locations to plot
         output_file: Path to save the plot
     """
     n_locations = min(n_locations_to_plot, len(coords['location']))
-    n_years = len(coords['year'])
+    n_years = len(coords['epi_year'])
 
     fig, axes = plt.subplots(n_years, n_locations,
                             figsize=(4 * n_locations, 2.5 * n_years))

@@ -177,9 +177,9 @@ class SeasonalFourierRegression:
         predictions_xr = fourier_model.extract_predictions(posterior, model_input)
         predictions_xr = predictions_xr*model_input.y_std +model_input.y_mean
         # Select only the first prediction_length months
-        predictions_xr = predictions_xr.isel(month=slice(0, self._prediction_length))
+        predictions_xr = predictions_xr.isel(epi_offset=slice(0, self._prediction_length))
 
-        # Flatten chains and draws: (chain, draw, location, month) -> (location, month, samples)
+        # Flatten chains and draws: (chain, draw, location, epi_offset) -> (location, epi_offset, samples)
         predictions_samples = predictions_xr.stack(samples=('chain', 'draw')).values
 
         # Transform back from log space: y = exp(log(y+1)) - 1

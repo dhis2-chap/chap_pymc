@@ -45,10 +45,10 @@ class FourierParametrization:
 
             alpha_arr[-1] = 15.0  # Strong prior towards 1 in last year
             beta_arr[-1] = 1.0
-            alpha, beta = (as_xtensor(v, dims=('year',)) for v in (alpha_arr, beta_arr))
+            alpha, beta = (as_xtensor(v, dims=('epi_year',)) for v in (alpha_arr, beta_arr))
 
             z = pmd.Beta('mixture_weight',
-                         alpha=alpha, beta=beta, dims=('location', 'year'))
+                         alpha=alpha, beta=beta, dims=('location', 'epi_year'))
             return z
         else:
             return 1.0
@@ -72,7 +72,7 @@ class FourierParametrization:
         # ha_sigma = pmd.HalfNormal('harmonic_a_sigma', sigma=1, dims=('harmonic',))
         a_sigma = pmd.HalfNormal('a_sigma', sigma=2., dims=('harmonic', 'location'))
         #A = a_mu + self._get_mv_harmonic('harmonic', pm.modelcontext().coords)
-        A = pmd.Normal('A', mu=0, sigma=a_sigma, dims=('location', 'year', 'harmonic')) + a_mu
+        A = pmd.Normal('A', mu=0, sigma=a_sigma, dims=('location', 'epi_year', 'harmonic')) + a_mu
         # pm.LKJCholeskyCov
         # pmd.MvNormal
         #A = pm.MvNormal
@@ -81,21 +81,21 @@ class FourierParametrization:
         mu = self._calculate_mu(s, n_months=y.shape[-1]) + ar_effect
         mu = pmd.Deterministic('last_mu',
                                mu * self._mixture_weights(n_years=y.shape[1]),
-                               dims=('location', 'year', 'month'))
-                               # Shape: (location, year, month)
+                               dims=('location', 'epi_year', 'epi_offset'))
+                               # Shape: (location, epi_year, epi_offset)
         sigma = pmd.HalfNormal('sigma', sigma=1)
 
         # Important! Using pmd in the observed statement seems to mess up the inference. Use raw values instead.
-        # Careful with broadcasting here: sigma is (location,) and mu is (location, year, month)
+        # Careful with broadcasting here: sigma is (location,) and mu is (location, epi_year, epi_offset)
         mv = missing_mask.values
         flat_mu = mu.values[~mv]
         flat_sigma=sigma.values
         #flat_sigma = pm.math.broadcast_to(sigma.values[:, None, None], mu.values.shape)[~mv]
         pm.Normal('flat_observed', flat_mu, sigma=flat_sigma, observed=y.values[~mv])
-        pmd.Normal('y_obs', mu=mu, sigma=sigma, dims=('location', 'year', 'month'))
+        pmd.Normal('y_obs', mu=mu, sigma=sigma, dims=('location', 'epi_year', 'epi_offset'))
         #
 
-        #pm.Normal('y_obs', mu=mu.values, sigma=sigma.values[:, None, None], observed=y, dims=('location', 'year', 'month'))
+        #pm.Normal('y_obs', mu=mu.values, sigma=sigma.values[:, None, None], observed=y, dims=('location', 'epi_year', 'epi_offset'))
 
 
     def _ar_effect(self, y: xarray.DataArray) -> Any:
@@ -110,25 +110,25 @@ class FourierParametrization:
                                         mu=0,
                                         sigma=ar_sigma[..., None],  # Broadcast here too
                                         steps=M - 1,
-                                        dims=('location', 'year', 'month'))
-        epsilon = as_xtensor(epsilon, dims=('location', 'year', 'month'))
+                                        dims=('location', 'epi_year', 'epi_offset'))
+        epsilon = as_xtensor(epsilon, dims=('location', 'epi_year', 'epi_offset'))
         return epsilon
 
     def _calculate_mu(self, A: Any, n_months: int) -> Any:
-        months = pmd.as_xtensor(np.arange(n_months), dims=('month',))
+        months = pmd.as_xtensor(np.arange(n_months), dims=('epi_offset',))
         harmonics = pmd.as_xtensor(np.arange(self.hyper_params.n_harmonics + 1), dims=('harmonic',))
         phi = pmd.Normal('phi', 0, sigma=np.pi, dims=('location', 'harmonic'))
         freq = 2 * np.pi * harmonics / 12  # Shape: (harmonic,)
-        months_phi = freq * months + phi  # (location, harmonic, month) due to broadcasting
-        harmonics_term = A * px.math.cos(months_phi)  # (location, year, harmonic, month)
-        mu = pmd.Deterministic('mu', harmonics_term.sum(dim='harmonic'), dims=('location', 'year', 'month'))
+        months_phi = freq * months + phi  # (location, harmonic, epi_offset) due to broadcasting
+        harmonics_term = A * px.math.cos(months_phi)  # (location, epi_year, harmonic, epi_offset)
+        mu = pmd.Deterministic('mu', harmonics_term.sum(dim='harmonic'), dims=('location', 'epi_year', 'epi_offset'))
         return mu
 
     def _linear_effect(self, X: xarray.DataArray) -> Any:
         beta = pmd.Normal('slope', mu=0, sigma=10, dims=('feature', 'harmonic'))
         # This is a batched matrix multiplication over the feature dimension
         result_tensor = pt.tensordot(X.values, beta.values, axes=[[2], [0]])
-        return pmd.Deterministic('linear_effect', result_tensor, dims=('location', 'year', 'harmonic'))
+        return pmd.Deterministic('linear_effect', result_tensor, dims=('location', 'epi_year', 'harmonic'))
 
     def extract_predictions(self, posterior: Any, model_input: FourierModelInput) -> xarray.DataArray:
         """
@@ -142,32 +142,32 @@ class FourierParametrization:
             model_input: ModelInput with y data and last_month information
 
         Returns:
-            xarray.DataArray with dims (chain, draw, location, month) containing
+            xarray.DataArray with dims (chain, draw, location, epi_offset) containing
             posterior samples for the prediction months
         """
         # Get the full y_obs samples from posterior (includes both observed and imputed)
         nans = model_input.y.isnull()
         logger.info('NANS: -------')
         logger.info(
-            nans.any(dim=('location', 'year')))
-        logger.info(nans.any(dim=('location', 'month')))
+            nans.any(dim=('location', 'epi_year')))
+        logger.info(nans.any(dim=('location', 'epi_offset')))
 
 
         try:
-            y_samples: xarray.DataArray = posterior['y_obs']  # (chain, draw, location, year, month)
+            y_samples: xarray.DataArray = posterior['y_obs']  # (chain, draw, location, epi_year, epi_offset)
         except Exception:
             for key in posterior.data_vars:
                 logger.error("Posterior variable: %s with dims %s", key, posterior[key].dims)
             raise
 
         # Extract last year
-        #last_year_idx = model_input.y.shape[1] - 1 if isinstance(model_input.y, np.ndarray) else len(model_input.y.coords['year']) - 1
-        y_last_year = y_samples.isel(year=(-1-model_input.added_last_year))
+        #last_year_idx = model_input.y.shape[1] - 1 if isinstance(model_input.y, np.ndarray) else len(model_input.y.coords['epi_year']) - 1
+        y_last_year = y_samples.isel(epi_year=(-1-model_input.added_last_year))
         prediction_months_idx = np.arange(model_input.last_month + 1, model_input.n_months())
-        y_predictions = y_last_year.isel(month=prediction_months_idx)
+        y_predictions = y_last_year.isel(epi_offset=prediction_months_idx)
         if model_input.added_last_year:
-            final_last_year = y_samples.isel(year=-1)
-            y_predictions = xarray.concat((y_predictions, final_last_year), dim='month')
+            final_last_year = y_samples.isel(epi_year=-1)
+            y_predictions = xarray.concat((y_predictions, final_last_year), dim='epi_offset')
             logger.info(y_predictions.coords)
 
         # Filter for prediction months (after last_month)
@@ -176,7 +176,7 @@ class FourierParametrization:
         if len(prediction_months_idx) < 3:
             logger.info(f"Only {len(prediction_months_idx)} months to predict, expected 3.")
             logger.info(f'model_input.last_month: {model_input.last_month}')
-            logger.info(f'y_coords month: {model_input.y.coords}')
+            logger.info(f'y_coords epi_offset: {model_input.y.coords}')
             logger.info(f'y_pred: {y_samples.coords}')
 
 
