@@ -43,7 +43,7 @@ class SeasonalXArray:
     def get_dataset(self, data_frame: pd.DataFrame) -> xarray.Dataset:
         data_frame = data_frame.copy()
 
-        data_frame[self.freq_name] = data_frame['time_period'].apply(lambda x: int(x.split('-')[1]))
+        data_frame[self.freq_name] = data_frame['time_period'].apply(lambda x: int(x.split('-')[1]))-1
         data_frame['year'] = data_frame['time_period'].apply(lambda x: int(x.split('-')[0]))
         self._min_month = self._find_min_month(data_frame) if self._params.split_season_index is None else self._params.split_season_index
         data_frame['epi_offset'] = (data_frame[self.freq_name] - self._min_month) % self.season_length

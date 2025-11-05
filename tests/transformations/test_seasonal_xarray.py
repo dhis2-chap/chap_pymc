@@ -61,11 +61,11 @@ class Properties:
     def last_value(self, df: pd.DataFrame, data_set: xarray.Dataset) -> None:
         '''Assert that the last value in the data_array matches the DataFrame.'''
         var = self._params.target_variable
-        last_month_idx = (self._season_info.season_length-self._params.split_season_index) % self._season_info.season_length
+        last_month_idx = (self._season_info.season_length-self._params.split_season_index-1) % self._season_info.season_length
         for location, group in df.groupby('location'):
             last_df = group.sort_values('time_period')[var].iloc[-1]
             last_da = data_set[var].sel(location=location).isel(epi_year=-1).isel(epi_offset=last_month_idx).values
-            assert last_df == last_da
+            assert last_df == last_da, f"Mismatch for location {location}: df={last_df}, da={last_da} last_month_idx={last_month_idx}, split_season_index={self._params.split_season_index}"
 
 @pytest.mark.parametrize("split_season_index", range(12))
 def test_seasonal_xarray_properties(simple_monthly_data: pd.DataFrame, split_season_index: int) -> None:
