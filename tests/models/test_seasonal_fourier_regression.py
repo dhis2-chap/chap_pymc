@@ -6,7 +6,10 @@ from chap_pymc.curve_parametrizations.fourier_parametrization import (
     FourierHyperparameters,
 )
 from chap_pymc.inference_params import InferenceParams
-from chap_pymc.models.seasonal_fourier_regression import SeasonalFourierRegression
+from chap_pymc.models.seasonal_fourier_regression import (
+    SeasonalFourierRegression,
+    SeasonalFourierRegressionV2,
+)
 
 
 def test_seasonal_fourier_regression_predict(viet_begin_season):
@@ -112,3 +115,29 @@ def test_compare_with_seasonal_regression(viet_begin_season):
     print(preds_original.head())
     print("\nFourier model predictions:")
     print(preds_fourier.head())
+
+
+#@pytest.mark.skip(reason="SeasonalFourierRegressionV2 implementation incomplete")
+def test_seasonal_fourier_regression_v2_basic(simple_monthly_data, simple_future_data):
+    """Smoke test for SeasonalFourierRegressionV2 with simple data"""
+    # Create V2 model with minimal params for fast testing
+    model = SeasonalFourierRegressionV2(
+        params=SeasonalFourierRegressionV2.Params(
+            inference_params=InferenceParams(method='advi', n_iterations=10),
+            fourier_hyperparameters=FourierHyperparameters(n_harmonics=1)
+        )
+    )
+
+    # Call predict with training and future data
+    result = model.predict(simple_monthly_data, simple_future_data)
+
+    # Basic smoke test - verify it returns a DataFrame
+    assert isinstance(result, pd.DataFrame)
+    assert 'location' in result.columns
+    assert 'time_period' in result.columns
+
+    # Check that we have predictions for both locations
+    assert result['location'].nunique() == 2
+
+    print(f"\nV2 Predictions shape: {result.shape}")
+    print(f"Columns: {result.columns.tolist()}")

@@ -14,7 +14,7 @@ class InferenceParams(BaseModel):
 
     # ADVI parameters
     n_iterations: int = 200_000
-
+    n_samples: int = 100
     # Common parameters
     random_seed: int = 42
     progressbar: bool = True

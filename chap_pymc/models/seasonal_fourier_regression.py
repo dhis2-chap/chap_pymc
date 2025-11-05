@@ -6,6 +6,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+import pydantic
 import pymc as pm
 
 from chap_pymc.curve_parametrizations.fourier_parametrization import (
@@ -53,6 +54,31 @@ def create_output(training_pdf: pd.DataFrame, posterior_samples: np.ndarray, n_s
 
     return pd.DataFrame(rows, columns=colnames)
 
+class SeasonalFourierRegressionV2:
+    class Params(pydantic.BaseModel):
+        inference_params: InferenceParams = InferenceParams()
+        fourier_hyperparameters: FourierHyperparameters = FourierHyperparameters()
+        input_params: FourierInputCreator.Params = FourierInputCreator.Params()
+
+    def __init__(self, params: Params = Params()) -> None:
+        self._params = params
+
+    def predict(self, training_data: pd.DataFrame, future_data: pd.DataFrame) -> pd.DataFrame:
+        ds = FourierInputCreator(params=self._params.input_params).v2(training_data, future_data)
+        fourier_model = FourierParametrization(self._params.fourier_hyperparameters)
+        #ds = ds.expand_dims(fourier_model.extra_dims)
+        coords = {dim: ds[dim].values for dim in ds.dims} | fourier_model.extra_dims
+        with pm.Model(coords=coords) as model:
+            fourier_model.get_regression_model(ds.X, ds.y)
+
+            # Choose inference method based on inference_params.method
+            inference_params = self._params.inference_params
+            if inference_params.method == 'hmc':
+                idata = pm.sample(**inference_params.model_dump(exclude={'method', 'n_iterations'}))
+            else:  # 'advi'
+                approx = pm.fit(n=inference_params.n_iterations, method='advi')
+                idata = approx.sample(inference_params.n_samples)
+            posterior_predictive = pm.sample_posterior_predictive(idata, var_names=['y_obs', 'A']).posterior_predictive
 
 class SeasonalFourierRegression:
     """
@@ -92,7 +118,8 @@ class SeasonalFourierRegression:
         self,
         training_data: pd.DataFrame,
         n_samples: int = 1000,
-        return_inference_data: bool = False
+        return_inference_data: bool = False,
+        future_data: pd.DataFrame | None = None,
     ) -> pd.DataFrame | tuple[pd.DataFrame, Any]:
         """
         Fit Fourier model and generate predictions for the next prediction_length months.
@@ -137,18 +164,9 @@ class SeasonalFourierRegression:
 
             # Choose inference method based on inference_params.method
             if self._inference_params.method == 'hmc':
-                # HMC/NUTS sampling
-                logging.info("Sampling from posterior using HMC/NUTS...")
                 idata = pm.sample(**self._inference_params.model_dump(exclude={'method', 'n_iterations'}))
-
             else:  # 'advi'
-                # ADVI variational inference
-                logging.info("Fitting with ADVI...")
-                # pm.model_to_graphviz(pm_model).render("fourier_model_graph", view=True)
                 approx = pm.fit(n=self._inference_params.n_iterations, method='advi')
-
-                # Sample from approximation
-                logging.info("Sampling from approximation...")
                 idata = approx.sample(n_samples)
             posterior_predictive = pm.sample_posterior_predictive(idata, var_names=['y_obs', 'A']).posterior_predictive
 

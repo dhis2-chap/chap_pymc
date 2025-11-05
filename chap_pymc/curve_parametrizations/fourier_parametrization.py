@@ -26,6 +26,11 @@ class FourierParametrization:
     def __init__(self, hyper_params: FourierHyperparameters = FourierHyperparameters()) -> None:
         self.hyper_params = hyper_params
 
+    @property
+    def extra_dims(self) -> dict[str, Any]:
+        '''Coordinates for extra dimensions used in the model.'''
+        return {'harmonic': np.arange(0, self.hyper_params.n_harmonics + 1)}  # Include baseline (h=0)
+
     def get_regression_model(self, X: xarray.DataArray, y: xarray.DataArray) -> None:
         return self.get_model(y, A_offset=self._linear_effect(X))
 
