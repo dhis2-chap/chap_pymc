@@ -17,12 +17,14 @@ class TransformParameters(pydantic.BaseModel):
     min_prev_months: int | None = None
     min_post_months: int | None = None
     alignment: Literal['min', 'max', 'med'] = 'min'
+    min_month: int | None = None
 
 
 class SeasonalTransform:
     '''
-    This class is responsible for converting time sereies data into a seasonal format. (i.e n_locations, n_seasons, n_months) array
-    . The year starts at the month with the lowest average incidence
+    This class is responsible for converting time sereies data into a seasonal format.
+     (i.e n_locations, n_seasons, n_months) array.
+      The year starts at the month with the lowest average incidence
     of disease cases.
     '''
     def coords(self) -> dict[str, np.ndarray]:
@@ -39,15 +41,18 @@ class SeasonalTransform:
         target_name: Name of the target variable column in df
         pad_left: Number of months to pad on the left (before the first month)
         pad_right: Number of months to pad on the right (after the last month)
-        0 padding means no padding.
-        '''
+        0 padding means no padding.'''
         min_prev_months = params.min_prev_months
         min_post_months = params.min_post_months
         self._params = params
         self._df = df.copy()
         self._df['month'] = self._df['time_period'].apply(lambda x: int(x.split('-')[1]))
         self._df['year'] = self._df['time_period'].apply(lambda x: int(x.split('-')[0]))
-        self._min_month = self._find_min_month()
+
+        if params.min_month is not None:
+            self._min_month = params.min_month
+        else:
+            self._min_month = self._find_min_month()
         self._df['seasonal_month'] = (self._df['month'] - self._min_month) % MONTHS_PER_YEAR
         offset = (self._df['month'] - self._min_month) // MONTHS_PER_YEAR
         self._df['season_idx'] = self._df['year'] + offset

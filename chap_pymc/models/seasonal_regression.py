@@ -18,8 +18,8 @@ import matplotlib.pyplot as plt
 import pytest
 
 from chap_pymc.inference_params import InferenceParams
-from chap_pymc.model_input_creator import FullModelInput, ModelInputCreator, FourierModelInput
-from chap_pymc.seasonal_transform import SeasonalTransform
+from chap_pymc.transformations.model_input_creator import FullModelInput, ModelInputCreator, FourierModelInput
+from chap_pymc.transformations.seasonal_transform import SeasonalTransform
 
 TESTING=False
 logging.basicConfig(level=logging.INFO)

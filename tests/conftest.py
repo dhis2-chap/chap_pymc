@@ -1,8 +1,10 @@
+import itertools
 import logging
 from pathlib import Path
 
 import chap_core
 import pandas as pd
+import pydantic
 import pytest
 from chap_core.assessment.dataset_splitting import train_test_generator
 from chap_core.spatio_temporal_data.temporal_dataclass import DataSet
@@ -78,6 +80,40 @@ def viet_full_year(data_path) -> pd.DataFrame:
     country = 'vietnam'
     return (df for df in get_full_year(country, data_path))
 
+
+class Coords(pydantic.BaseModel):
+    locations: list[str]
+    years: list[int]
+    variables: list[str]
+
+@pytest.fixture
+def simple_coords() -> Coords:
+    locations = ['loc1', 'loc2']
+    years = [2021, 2022]
+    variables = ['disease_cases', 'mean_temperature']
+    return Coords(locations=locations, years=years, variables=variables)
+
+@pytest.fixture
+def simple_monthly_data(simple_coords) -> pd.DataFrame:
+    months = list(range(1, 13))
+    rows = []
+    for i, (location, year, month) in enumerate(itertools.product(simple_coords.locations, simple_coords.years, months)):
+        rows.append({
+            'location': location,
+            'time_period': f'{year}-{month:02d}',
+        } | {var: float(i*t + 1) for t, var in enumerate(simple_coords.variables)})
+    return pd.DataFrame(rows)
+
+@pytest.fixture
+def simple_future_data(simple_coords) -> pd.DataFrame:
+    months = [1, 2, 3]
+    rows = []
+    for i, (location, month) in enumerate(itertools.product(simple_coords.locations, months)):
+        rows.append({
+            'location': location,
+            'time_period': f'2023-{month:02d}',
+        } | {var: float(i*t + 100) for t, var in enumerate(simple_coords.variables)})
+    return pd.DataFrame(rows)
 
 def get_full_year(country, data_path: Path) -> pd.DataFrame:
     csv_file = data_path / (f'{country}.csv')

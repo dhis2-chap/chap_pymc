@@ -14,7 +14,7 @@ from chap_pymc.curve_parametrizations.fourier_parametrization_plots import (
     plot_vietnam_faceted_predictions,
 )
 from chap_pymc.inference_params import InferenceParams
-from chap_pymc.model_input_creator import ModelInputCreator
+from chap_pymc.transformations.model_input_creator import ModelInputCreator
 from chap_pymc.models.seasonal_fourier_regression import SeasonalFourierRegression
 
 

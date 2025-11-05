@@ -2,3 +2,7 @@
 *.html
 *.pdf
 /old_output/
+*__pycache__*
+*egg-info*
+runs/
+mlruns/

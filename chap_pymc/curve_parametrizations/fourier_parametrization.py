@@ -8,9 +8,9 @@ import pymc.dims as pmd
 import pytensor.tensor as pt
 import pytensor.xtensor as px
 import xarray
-from pytensor.xtensor.type import XTensorVariable, as_xtensor
+from pytensor.xtensor.type import as_xtensor
 
-from chap_pymc.model_input_creator import FourierModelInput
+from chap_pymc.transformations.model_input_creator import FourierModelInput
 
 logger = logging.getLogger(__name__)
 

@@ -4,10 +4,12 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+import pydantic
 import pytest
 import xarray
 
-from chap_pymc.seasonal_transform import SeasonalTransform, TransformParameters
+from chap_pymc.transformations.seasonal_transform import SeasonalTransform, TransformParameters
+from chap_pymc.transformations.seasonal_xarray import SeasonalXArray
 
 logger = logging.getLogger(__name__)
 
@@ -60,11 +62,15 @@ class FourierInputCreator:
     4. Returns xarray DataArrays with full coordinate information
     """
     features = ['mean_temperature']
+    class Params(pydantic.BaseModel):
+        lag: int = 3
+        seasonal_params: SeasonalXArray.Params = SeasonalXArray.Params()
 
     def __init__(
         self,
         prediction_length: int = 3,
         lag: int = 3,
+        params: Params = Params(),
     ):
         """
         Initialize FourierInputCreator.
@@ -77,12 +83,41 @@ class FourierInputCreator:
         self._prediction_length = prediction_length
         self._lag = lag
         self._seasonal_data: SeasonalTransform | None = None  # For backward compatibility
-
+        self._params = params
     @property
     def seasonal_data(self) -> SeasonalTransform:
         if self._seasonal_data is None:
             raise ValueError("seasonal_data has not been set yet.")
         return self._seasonal_data
+
+    def v2(self, training_data: pd.DataFrame, future_data: pd.DataFrame) -> xarray.Dataset:
+        """Backward compatibility method for previous interface."""
+        future_data['disease_cases'] = np.nan
+        data_frame = pd.concat([training_data, future_data], ignore_index=True)
+        params = self._params.seasonal_params
+        params.target_variable = 'y'
+        sx = SeasonalXArray(params)
+        data_frame = data_frame.copy()
+        data_frame['y'] = np.log1p(data_frame['disease_cases'])
+        y = sx.get_dataset(data_frame)['y']
+        first_month = int(str(future_data['time_period'].min()).split('-')[1])-1
+        params.split_season_index = first_month
+        X = SeasonalXArray(params).get_dataset(data_frame)['mean_temperature']
+        X = X.isel(epi_offset=slice(self._lag))
+        X = X.rename({'epi_offset': 'feature'})
+        # Remove first year if missing predictors
+        if X.isel(epi_year=0).isnull().any():
+            X = X.isel(epi_year=slice(1, None))
+
+        # Subset y to match the same epi_year as X
+        y = y.sel(epi_year=X.epi_year)
+
+        assert X.shape[-1] == self._params.lag
+        assert not X.isnull().any(), f"NaNs found in feature array X: {X.where(X.isnull(), drop=True)}"
+        return xarray.Dataset({
+            'X': X,
+            'y': y
+        })
 
     def create_model_input(self, training_data: pd.DataFrame) -> FourierModelInput:
         """

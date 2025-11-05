@@ -5,7 +5,7 @@ import pandas as pd
 import pymc as pm
 from pytensor import tensor as pt
 
-from util import (
+from chap_pymc.util import (
     complete_monthly_panel,
     extract_month_indices,
     to_tensor_panels,
