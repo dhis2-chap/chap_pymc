@@ -21,13 +21,13 @@ import pytensor.tensor as pt
 import yaml
 from sklearn.preprocessing import StandardScaler
 
-from extension import continue_rw_process, prepare_extended_data
-from plotting import (
+from chap_pymc.extension import continue_rw_process, prepare_extended_data
+from chap_pymc.plotting import (
     create_model_visualization,
     create_parameter_plot,
     plot_model_components,
 )
-from util import (
+from chap_pymc.util import (
     complete_monthly_panel,
     extract_month_indices,
     to_tensor_panels,
