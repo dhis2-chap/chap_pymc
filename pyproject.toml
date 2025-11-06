@@ -86,7 +86,7 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_functions = ["test_*"]
 addopts = "-v --tb=short -m 'not slow'"
-timeout = 30
+
 markers = [
     "parametrize: marks tests as parametrized",
     "slow: marks tests as slow (deselected by default)",

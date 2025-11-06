@@ -46,15 +46,21 @@ def y(coords):
 
 
 @pytest.fixture()
-def viet_model_input(viet_begin_season):
+def vietnam_ds(viet_begin_season):
     creator = ModelInputCreator(prediction_length=3, lag=3)
     model_input = creator.create_model_input(viet_begin_season)
     return model_input
 
+@pytest.fixture()
+def viet_ds(viet_begin_season):
+    creator = ModelInputCreator(prediction_length=3, lag=3)
+    ds, mapping = creator.v2(viet_begin_season, viet_begin_season)
+    return creator.to_xarray(model_input)
+
 @pytest.fixture
-def vietnam_y_xarray(viet_model_input):
+def vietnam_y_xarray(vietnam_ds):
     """Get y-xarray for Vietnam dataset"""
-    return viet_model_input.y
+    return vietnam_ds.y
 
 
 def test_vietnam_y_xarray_fixture(vietnam_y_xarray):
@@ -99,15 +105,15 @@ def test_fourier_parametrization(y, coords):
     plot_faceted_predictions(y, mu_mean, mu_lower, mu_upper, coords)
 
 @pytest.fixture
-def viet_coords(viet_model_input):
+def viet_coords(vietnam_ds):
     n_harmonics = 3  # Number of oscillating harmonics (not counting baseline)
 
     return {
-        'location': viet_model_input.y.coords['location'].values,
-        'year': viet_model_input.y.coords['year'].values,
-        'month': viet_model_input.y.coords['month'].values,
+        'location': vietnam_ds.y.coords['location'].values,
+        'year': vietnam_ds.y.coords['year'].values,
+        'month': vietnam_ds.y.coords['month'].values,
         'harmonic': np.arange(0, n_harmonics + 1),  # [0, 1, 2, 3]: 0=baseline, 1-3=oscillating
-        'feature': viet_model_input.X.coords['feature'].values
+        'feature': vietnam_ds.X.coords['feature'].values
     }
 @pytest.fixture
 def viet_idata_path():
@@ -138,39 +144,47 @@ def test_nepal_regresion(nepal_data):
 
 @pytest.mark.slow
 def test_full_vietnam_regression(viet_full_year):
-    for i, (viet_instance, _t) in enumerate(viet_full_year):
+    for i, (viet_instance, future) in enumerate(viet_full_year):
         if i<7:
             continue
         creator = ModelInputCreator(prediction_length=3, lag=3)
-        model_input = creator.create_model_input(viet_instance)
-        test_vietnam_regression(model_input, viet_idata_path=f'viet_{i}.nc', i=i)
+        ds, mapping = creator.v2(viet_instance, future)
+        test_vietnam_regression(ds, viet_idata_path=f'viet_{i}.nc', i=i)
+
+
+@pytest.fixture()
+def vietnam_ds(viet_full_year) -> xarray.Dataset:
+    viet_instance, future = next(viet_full_year)
+    creator = ModelInputCreator(prediction_length=3, lag=3)
+    ds, mapping = creator.v2(viet_instance, future)
+    return ds
 
 @pytest.mark.slow
-def test_vietnam_regression(viet_model_input,  viet_idata_path=None, i=0):
-    viet_coords= viet_model_input.coords() | {'harmonic': np.arange(0, 4)}  # Add harmonic coordinate (0=baseline, 1-3=harmonics)
-    n_harmonics = len(viet_coords['harmonic']) - 1  # Subtract 1 for baseline
-    with pm.Model(coords=viet_coords) as model:
-        m = FourierParametrization(FourierHyperparameters(n_harmonics=n_harmonics))
-        m.get_regression_model(viet_model_input.X, viet_model_input.y)
+def test_vietnam_regression(vietnam_ds, viet_idata_path=None, i=0):
+    ds = vietnam_ds
+    m = FourierParametrization(FourierHyperparameters(n_harmonics=3))
+    viet_coords = {dim: ds[dim].values for dim in ds.dims} | m.extra_dims
+    #viet_coords= vietnam_ds.coords() | {'harmonic': np.arange(0, 4)}  # Add harmonic coordinate (0=baseline, 1-3=harmonics)
 
+    with pm.Model(coords=viet_coords) as model:
+        m.get_regression_model(vietnam_ds.X, vietnam_ds.y)
         pm.model_to_graphviz(model).render('fourier_graph', format='png', view=True)
         if False:
             approx = pm.fit(n=100000, method='advi')
-
             # Sample from approximation
             idata = approx.sample(1000)
         else:
             idata = pm.sample(draws=500, tune=500, progressbar=True, return_inferencedata=True)
         posterior = pm.sample_posterior_predictive(idata, var_names=['y_obs']).posterior_predictive
         #idata = pm.sample(draws=500, tune=500, chains=4, progressbar=True, return_inferencedata=True)
-#az.plot_posterior(idata, var_names=['slope'])
+    #az.plot_posterior(idata, var_names=['slope'])
         az.plot_posterior(idata, var_names=['sigma'])
         plt.show()
     # Save idata for inspection
     if viet_idata_path:
         idata.to_netcdf(viet_idata_path)
-        viet_model_input.y.to_netcdf(f'y_{viet_idata_path}')
-        viet_model_input.X.to_netcdf(f'X_{viet_idata_path}')
+        vietnam_ds.y.to_netcdf(f'y_{viet_idata_path}')
+        vietnam_ds.X.to_netcdf(f'X_{viet_idata_path}')
 
     #posterior = idata.posterior
     #posterior['A'].isel(harmonic=0).median(dim=['chain', 'draw']).plot()
@@ -181,7 +195,7 @@ def test_vietnam_regression(viet_model_input,  viet_idata_path=None, i=0):
     mu_upper = mu_posterior.quantile(0.975, dim=['chain', 'draw'])
 
     # Create plot using plotting function
-    plot_vietnam_faceted_predictions(viet_model_input.y, mu_mean, mu_lower, mu_upper, viet_coords, output_file=f'vietnam_fourier_fit_{i}.png')
+    plot_vietnam_faceted_predictions(vietnam_ds.y, mu_mean, mu_lower, mu_upper, viet_coords, output_file=f'vietnam_fourier_fit_{i}.png')
 
 def test_vietnam(viet_begin_season, debug_model):
     debug_model.predict(viet_begin_season)
@@ -215,7 +229,7 @@ def test_extract_samples(viet_idata_path):
 
 
 @pytest.mark.skip(reason="Requires viet_idata_path fixture")
-def test_extract_predictions(viet_idata_path, viet_model_input):
+def test_extract_predictions(viet_idata_path, vietnam_ds):
     """Test extracting prediction samples from last year"""
     idata = az.from_netcdf(viet_idata_path)
 
@@ -223,15 +237,15 @@ def test_extract_predictions(viet_idata_path, viet_model_input):
     model = FourierParametrization(FourierHyperparameters(n_harmonics=3))
 
     # Extract predictions
-    predictions = model.extract_predictions(idata.posterior, viet_model_input)
+    predictions = model.extract_predictions(idata.posterior, vietnam_ds)
 
     print(f"\nPredictions shape: {predictions.shape}")
     print(f"Predictions dims: {predictions.dims}")
-    print(f"Last month: {viet_model_input.last_month}")
+    print(f"Last month: {vietnam_ds.last_month}")
     print(f"Prediction months: {predictions.coords['month'].values}")
 
     # Check shape
-    expected_n_pred_months = 12 - (viet_model_input.last_month + 1)
+    expected_n_pred_months = 12 - (vietnam_ds.last_month + 1)
     assert predictions.dims == ('chain', 'draw', 'location', 'month')
     assert predictions.shape[0] == 4  # chains
     assert predictions.shape[1] == 500  # draws
@@ -281,14 +295,14 @@ def test_vietnam_fourier_fit(vietnam_y_xarray):
 
 
 @pytest.mark.slow
-def test_vietnam_parameter_correlations(viet_model_input):
+def test_vietnam_parameter_correlations(vietnam_ds):
     """Fit Fourier model and plot parameter-feature correlations"""
     from chap_pymc.curve_parametrizations.fourier_parametrization_plots import (
         plot_parameter_feature_correlations,
     )
 
     # Extract coordinates and data
-    vietnam_y = viet_model_input.y
+    vietnam_y = vietnam_ds.y
     n_harmonics = 3
     coords = {
         'location': vietnam_y.coords['location'].values,
@@ -305,5 +319,5 @@ def test_vietnam_parameter_correlations(viet_model_input):
         idata = pm.sample(draws=500, tune=500, progressbar=True, return_inferencedata=True)
 
     # Create correlation plot
-    plot_parameter_feature_correlations(idata, viet_model_input, n_harmonics,
-                                       output_file='vietnam_parameter_correlations.html')
+    plot_parameter_feature_correlations(idata, vietnam_ds, n_harmonics,
+                                        output_file='vietnam_parameter_correlations.html')

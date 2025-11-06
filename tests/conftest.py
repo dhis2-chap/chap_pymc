@@ -1,6 +1,7 @@
 import itertools
 import logging
 from pathlib import Path
+from typing import Any, Generator
 
 import chap_core
 import pandas as pd
@@ -78,8 +79,7 @@ def viet_begin_season(data_path) -> pd.DataFrame:
 @pytest.fixture
 def viet_full_year(data_path) -> pd.DataFrame:
     country = 'vietnam'
-    return (df for df in get_full_year(country, data_path))
-
+    return get_full_year(country, data_path)
 
 class Coords(pydantic.BaseModel):
     locations: list[str]
@@ -115,7 +115,7 @@ def simple_future_data(simple_coords) -> pd.DataFrame:
         } | {var: float(i*t + 100) for t, var in enumerate(simple_coords.variables)})
     return pd.DataFrame(rows)
 
-def get_full_year(country, data_path: Path) -> pd.DataFrame:
+def get_full_year(country, data_path: Path) -> Generator[tuple[Any, Any], Any, None]:
     csv_file = data_path / (f'{country}.csv')
     dataset = chap_core.data.DataSet.from_csv(csv_file)
 

@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 import pydantic
 import pymc as pm
+import xarray
 
 from chap_pymc.curve_parametrizations.fourier_parametrization import (
     FourierHyperparameters,
@@ -65,8 +66,25 @@ class SeasonalFourierRegressionV2:
 
     def predict(self, training_data: pd.DataFrame, future_data: pd.DataFrame) -> pd.DataFrame:
         ds, mapping = FourierInputCreator(params=self._params.input_params).v2(training_data, future_data)
+        samples = self.get_raw_samples(ds)
+
+        n_samples = self._params.inference_params.n_samples
+        indices =np.random.choice(samples.sizes['samples'], replace=True, size=n_samples)
+        samples = np.maximum(0,np.expm1(samples.isel(samples=indices)))
+        colnames = ['location', 'time_period'] + [f'sample_{i}' for i in range(n_samples)]
+        rows = []
+        for row in future_data.itertuples():
+            location = row.location
+            time_period = row.time_period
+            array_coords = mapping[str(time_period)]
+            sample_values = samples.sel(location=location, **array_coords.model_dump()).values
+            new_row = [location, time_period] + sample_values.tolist()
+            rows.append(new_row)
+        return pd.DataFrame(rows, columns=colnames)
+
+    def get_raw_samples(self, ds: xarray.Dataset) -> xarray.DataArray:
         fourier_model = FourierParametrization(self._params.fourier_hyperparameters)
-        #ds = ds.expand_dims(fourier_model.extra_dims)
+        # ds = ds.expand_dims(fourier_model.extra_dims)
         coords = {dim: ds[dim].values for dim in ds.dims} | fourier_model.extra_dims
         with pm.Model(coords=coords) as model:
             fourier_model.get_regression_model(ds.X, ds.y)
@@ -81,19 +99,9 @@ class SeasonalFourierRegressionV2:
             posterior_predictive = pm.sample_posterior_predictive(idata, var_names=['y_obs', 'A']).posterior_predictive
         # Extract predictions
 
-        samples = posterior_predictive['y_obs'].stack(samples=('chain', 'draw'))
-        indices =np.random.choice(samples.sizes['samples'], replace=True, size=inference_params.n_samples)
-        samples = np.maximum(0,np.expm1(samples.isel(samples=indices)))
-        colnames = ['location', 'time_period'] + [f'sample_{i}' for i in range(inference_params.n_samples)]
-        rows = []
-        for row in future_data.itertuples():
-            location = row.location
-            time_period = row.time_period
-            coords = mapping[str(time_period)]
-            sample_values = samples.sel(location=location, **coords.model_dump()).values
-            new_row = [location, time_period] + sample_values.tolist()
-            rows.append(new_row)
-        return pd.DataFrame(rows, columns=colnames)
+        samples: xarray.DataArray = posterior_predictive['y_obs'].stack(samples=('chain', 'draw'))
+        return samples
+
 
 class SeasonalFourierRegression:
     """

@@ -6,7 +6,7 @@ from chap_pymc.curve_parametrizations.fourier_parametrization import (
     FourierHyperparameters,
 )
 from chap_pymc.inference_params import InferenceParams
-from chap_pymc.models.seasonal_fourier_regression import SeasonalFourierRegression
+from chap_pymc.models.seasonal_fourier_regression import SeasonalFourierRegression, SeasonalFourierRegressionV2
 
 app = cyclopts.App()
 #
@@ -27,7 +27,7 @@ def predict(model: str,
             future_data: str,
             out_file: str,
             model_config_file: str | None = None,
-):
+            ):
     """
     Generate predictions using either seasonal or Fourier regression model.
 
@@ -43,15 +43,19 @@ def predict(model: str,
     if model_config_file is not None:
         model_config = ChapConfig.model_validate_json(open(model_config_file).read()).user_options
     training_df = pd.read_csv(historic_data)
-
+    future_df = pd.read_csv(future_data)
     inference_params = InferenceParams(**model_config.model_dump())
-    model = SeasonalFourierRegression(
-        prediction_length=3,
-        lag=3,
-        fourier_hyperparameters=FourierHyperparameters(**model_config.model_dump()),
-        inference_params=inference_params
-    )
-    predictions = model.predict(training_df, n_samples=1000)
+    fourier_hyperparameters = FourierHyperparameters(**model_config.model_dump())
+    params=SeasonalFourierRegressionV2.Params(inference_params=inference_params,
+                                              fourier_hyperparameters=fourier_hyperparameters)
+    regression_model = SeasonalFourierRegressionV2(params)
+    # model = SeasonalFourierRegression(
+    #     prediction_length=3,
+    #     lag=3,
+    #     fourier_hyperparameters=FourierHyperparameters(**model_config.model_dump()),
+    #     inference_params=inference_params
+    # )
+    predictions = regression_model.predict(training_df, future_df)
     predictions.to_csv(out_file, index=False)
     print(f"Predictions saved to {out_file}")
 
