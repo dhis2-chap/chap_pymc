@@ -99,10 +99,11 @@ class FourierInputCreator:
         sx = SeasonalXArray(params)
         data_frame = data_frame.copy()
         data_frame['y'] = np.log1p(data_frame['disease_cases'])
-        y, mapping = sx.get_dataset(data_frame)['y']
+        ds, mapping = sx.get_dataset(data_frame)
+        y= ds['y']
         first_month = int(str(future_data['time_period'].min()).split('-')[1])-1
         params.split_season_index = first_month
-        X, _ = SeasonalXArray(params).get_dataset(data_frame)['mean_temperature']
+        X = SeasonalXArray(params).get_dataset(data_frame)[0]['mean_temperature']
         X = X.isel(epi_year=slice(None, -1), epi_offset=slice(-self._lag, None))
         X = X.rename({'epi_offset': 'feature'})
         # Remove first year if missing predictors
