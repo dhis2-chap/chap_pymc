@@ -18,3 +18,6 @@ Always make sure pytest passes before pushing code
 Always make ruff checks pass before pushing code
 Run mypy to verify type annotations: `uv run mypy chap_pymc/`
 DONT access private variables in tests (e.g. _variable), use public API only
+
+# Commits
+* Always commit after completing a logical unit of work with passing tests

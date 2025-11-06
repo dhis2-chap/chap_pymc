@@ -72,7 +72,7 @@ def test_seasonal_xarray_properties(simple_monthly_data: pd.DataFrame, split_sea
     """Test properties of SeasonalXArray transformation."""
     params = SeasonalXArray.Params(split_season_index=split_season_index)
     transformer = SeasonalXArray(params)
-    data_array = transformer.get_dataset(simple_monthly_data)
+    data_array, mapping = transformer.get_dataset(simple_monthly_data)
 
     # Check number of non-null elements
     properties = Properties(params)

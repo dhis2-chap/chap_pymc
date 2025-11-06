@@ -29,6 +29,11 @@ class MonthInfo(SeasonInformation):
     season_length: int = 12
     name: str = "month"
 
+class TimeCoords(pydantic.BaseModel):
+    epi_year: int
+    epi_month: int
+
+
 class SeasonalXArray:
     class Params(pydantic.BaseModel):
         split_season_index: int | None = None
@@ -40,7 +45,11 @@ class SeasonalXArray:
         self._params = params
         self._season_info = SeasonInformation.get(params.frequency)
 
-    def get_dataset(self, data_frame: pd.DataFrame) -> xarray.Dataset:
+    def create_coord_mapping(self, data_frame: pd.DataFrame) -> dict[str, TimeCoords]:
+        return {str(row['time_period']): TimeCoords(epi_year=int(row['epi_year']), epi_month=int(row['epi_offset'])) for _, row in data_frame.iterrows()}
+
+
+    def get_dataset(self, data_frame: pd.DataFrame) -> tuple[xarray.Dataset, dict[str, TimeCoords]]:
         data_frame = data_frame.copy()
 
         data_frame[self.freq_name] = data_frame['time_period'].apply(lambda x: int(x.split('-')[1]))-1
@@ -52,7 +61,7 @@ class SeasonalXArray:
         # Set epi_year coords to count from -N to 0, where 0 is the last season
         data_frame['epi_year'] = data_frame['epi_year'] - data_frame['epi_year'].max()
         ds = xarray.Dataset.from_dataframe(data_frame.set_index(['location', 'epi_year', 'epi_offset']))
-        return ds
+        return ds, self.create_coord_mapping(data_frame)
 
     @property
     def freq_name(self):
