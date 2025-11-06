@@ -5,6 +5,7 @@ import pytest
 from chap_pymc.curve_parametrizations.fourier_parametrization import (
     FourierHyperparameters,
 )
+from chap_pymc.curve_parametrizations.fourier_parametrization_plots import plot_vietnam_faceted_predictions
 from chap_pymc.inference_params import InferenceParams
 from chap_pymc.models.seasonal_fourier_regression import (
     SeasonalFourierRegression,
@@ -52,6 +53,17 @@ def test_viet_full_year(viet_full_year):
         if i<7:
             continue
         test_seasonal_fourier_regression_advi(viet_instance, t)
+
+def test_viet_regression(viet_full_year):
+    training_df, future_df = next(viet_full_year)
+    model = SeasonalFourierRegressionV2()
+    ds, mapping = model.get_input_data(future_df, training_df)
+    samples = model.get_raw_samples(ds)
+    median = samples.median(dim='samples')
+    q_low = samples.quantile(0.1, dim='samples')
+    q_high = samples.quantile(0.9, dim='samples')
+    plot_vietnam_faceted_predictions(ds.y, median, q_low, q_high, ds.coords, output_file=f'regression_fit.png')
+
 
 
 def test_seasonal_fourier_regression_advi(viet_begin_season, truth=None):

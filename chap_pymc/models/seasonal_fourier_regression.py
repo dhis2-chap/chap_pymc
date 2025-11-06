@@ -9,13 +9,16 @@ import pandas as pd
 import pydantic
 import pymc as pm
 import xarray
+from pandas import DataFrame
+from xarray import DataArray, Dataset
 
 from chap_pymc.curve_parametrizations.fourier_parametrization import (
     FourierHyperparameters,
     FourierParametrization,
 )
 from chap_pymc.inference_params import InferenceParams
-from chap_pymc.transformations.model_input_creator import FourierInputCreator
+from chap_pymc.transformations.model_input_creator import FourierInputCreator, NormalizationParams
+from chap_pymc.transformations.seasonal_xarray import TimeCoords
 
 logging.basicConfig(level=logging.INFO)
 
@@ -65,12 +68,21 @@ class SeasonalFourierRegressionV2:
         self._params = params
 
     def predict(self, training_data: pd.DataFrame, future_data: pd.DataFrame) -> pd.DataFrame:
-        ds, mapping = FourierInputCreator(params=self._params.input_params).v2(training_data, future_data)
+        ds, mapping = self.get_input_data(future_data, training_data)
         samples = self.get_raw_samples(ds)
+        prediction_df = self.get_predictions_df(future_data, mapping, samples)
+        return prediction_df
 
+    def get_input_data(self, future_data: DataFrame, training_data: DataFrame) -> tuple[Dataset, dict[str, TimeCoords]]:
+        ds, mapping = FourierInputCreator(params=self._params.input_params).v2(training_data, future_data)
+        return ds, mapping
+
+    def get_predictions_df(self, future_data: DataFrame, mappings: tuple[dict[str, TimeCoords], NormalizationParams], samples: DataArray) -> DataFrame:
+        mapping, n_params = mappings
+        samples = samples*n_params.std+n_params.mean
         n_samples = self._params.inference_params.n_samples
-        indices =np.random.choice(samples.sizes['samples'], replace=True, size=n_samples)
-        samples = np.maximum(0,np.expm1(samples.isel(samples=indices)))
+        indices = np.random.choice(samples.sizes['samples'], replace=True, size=n_samples)
+        samples = np.maximum(0, np.expm1(samples.isel(samples=indices)))
         colnames = ['location', 'time_period'] + [f'sample_{i}' for i in range(n_samples)]
         rows = []
         for row in future_data.itertuples():
@@ -80,7 +92,8 @@ class SeasonalFourierRegressionV2:
             sample_values = samples.sel(location=location, **array_coords.model_dump()).values
             new_row = [location, time_period] + sample_values.tolist()
             rows.append(new_row)
-        return pd.DataFrame(rows, columns=colnames)
+        prediction_df = pd.DataFrame(rows, columns=colnames)
+        return prediction_df
 
     def get_raw_samples(self, ds: xarray.Dataset) -> xarray.DataArray:
         fourier_model = FourierParametrization(self._params.fourier_hyperparameters)

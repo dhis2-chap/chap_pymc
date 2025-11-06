@@ -70,7 +70,7 @@ class FourierParametrization:
         a_mu = pmd.Normal('a_mu', mu=0, sigma=1, dims=('location', 'harmonic'))
         #a_mu = self._get_mv_harmonic('harmonic', pm.modelcontext(None).coords)
         # ha_sigma = pmd.HalfNormal('harmonic_a_sigma', sigma=1, dims=('harmonic',))
-        a_sigma = pmd.HalfNormal('a_sigma', sigma=2., dims=('harmonic', 'location'))
+        a_sigma = pmd.HalfNormal('a_sigma', sigma=2., dims=('harmonic',))
         #A = a_mu + self._get_mv_harmonic('harmonic', pm.modelcontext().coords)
         A = pmd.Normal('A', mu=0, sigma=a_sigma, dims=('location', 'epi_year', 'harmonic')) + a_mu
         # pm.LKJCholeskyCov
@@ -80,7 +80,7 @@ class FourierParametrization:
         ar_effect = self._ar_effect(y) if self.hyper_params.do_ar_effect else 0
         mu = self._calculate_mu(s, n_months=y.shape[-1]) + ar_effect
         mu = pmd.Deterministic('last_mu',
-                               mu * self._mixture_weights(n_years=y.shape[1]),
+                               mu * self._mixture_weights(n_years=y.sizes['epi_year']),
                                dims=('location', 'epi_year', 'epi_offset'))
                                # Shape: (location, epi_year, epi_offset)
         sigma = pmd.HalfNormal('sigma', sigma=1)

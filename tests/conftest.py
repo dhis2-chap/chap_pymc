@@ -77,7 +77,7 @@ def viet_begin_season(data_path) -> pd.DataFrame:
 
 
 @pytest.fixture
-def viet_full_year(data_path) -> pd.DataFrame:
+def viet_full_year(data_path) -> Generator[tuple[Any, Any], Any, None]:
     country = 'vietnam'
     return get_full_year(country, data_path)
 

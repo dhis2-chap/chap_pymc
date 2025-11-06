@@ -52,6 +52,11 @@ class FourierModelInput(ModelInputBase):
     y_mean: xarray.DataArray | None = None
     y_std: xarray.DataArray | None = None
 
+@dataclasses.dataclass
+class NormalizationParams:
+    mean: xarray.DataArray
+    std: xarray.DataArray
+
 class FourierInputCreator:
     """
     Creates xarray-based model input for SeasonalFourierRegression.
@@ -101,7 +106,16 @@ class FourierInputCreator:
         data_frame = data_frame.copy()
         data_frame['y'] = np.log1p(data_frame['disease_cases'])
         ds, mapping = sx.get_dataset(data_frame)
-        y= ds['y']
+        y = ds['y']
+
+        y_mean = y.mean(dim=('epi_year', 'epi_offset'))
+        y_std = y.std(dim=('epi_year', 'epi_offset'))
+        n_params = NormalizationParams(
+            mean=y_mean,
+            std=y_std
+        )
+        y = (y-y_mean)/y_std
+
         first_month = int(str(future_data['time_period'].min()).split('-')[1])-1
         params.split_season_index = first_month
 
@@ -117,10 +131,9 @@ class FourierInputCreator:
 
         assert X.shape[-1] == self._params.lag
         assert not X.isnull().any(), f"NaNs found in feature array X: {X.where(X.isnull(), drop=True)}"
-        return xarray.Dataset({
-            'X': X,
-            'y': y
-        }), mapping
+        return (xarray.Dataset({'X': X,'y': y}),
+                (mapping,
+                n_params))
 
     def create_model_input(self, training_data: pd.DataFrame) -> FourierModelInput:
         """

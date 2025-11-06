@@ -195,7 +195,8 @@ def test_vietnam_regression(vietnam_ds, viet_idata_path=None, i=0):
     mu_upper = mu_posterior.quantile(0.975, dim=['chain', 'draw'])
 
     # Create plot using plotting function
-    plot_vietnam_faceted_predictions(vietnam_ds.y, mu_mean, mu_lower, mu_upper, viet_coords, output_file=f'vietnam_fourier_fit_{i}.png')
+    plot_vietnam_faceted_predictions(vietnam_ds.y, mu_mean, mu_lower, mu_upper, viet_coords,
+                                     output_file=f'vietnam_fourier_fit_{i}.png')
 
 def test_vietnam(viet_begin_season, debug_model):
     debug_model.predict(viet_begin_season)
