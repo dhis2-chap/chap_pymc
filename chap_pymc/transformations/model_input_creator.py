@@ -7,9 +7,10 @@ import pandas as pd
 import pydantic
 import pytest
 import xarray
+from xarray import Dataset
 
 from chap_pymc.transformations.seasonal_transform import SeasonalTransform, TransformParameters
-from chap_pymc.transformations.seasonal_xarray import SeasonalXArray
+from chap_pymc.transformations.seasonal_xarray import SeasonalXArray, TimeCoords
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +91,7 @@ class FourierInputCreator:
             raise ValueError("seasonal_data has not been set yet.")
         return self._seasonal_data
 
-    def v2(self, training_data: pd.DataFrame, future_data: pd.DataFrame) -> xarray.Dataset:
+    def v2(self, training_data: pd.DataFrame, future_data: pd.DataFrame) -> tuple[Dataset, dict[str, TimeCoords]]:
         """Backward compatibility method for previous interface."""
         future_data['disease_cases'] = np.nan
         data_frame = pd.concat([training_data, future_data], ignore_index=True)
@@ -103,8 +104,9 @@ class FourierInputCreator:
         y= ds['y']
         first_month = int(str(future_data['time_period'].min()).split('-')[1])-1
         params.split_season_index = first_month
-        X = SeasonalXArray(params).get_dataset(data_frame)[0]['mean_temperature']
-        X = X.isel(epi_year=slice(None, -1), epi_offset=slice(-self._lag, None))
+
+        X = SeasonalXArray(params).get_dataset(training_data)[0]['mean_temperature']
+        X = X.isel(epi_offset=slice(-self._lag, None))
         X = X.rename({'epi_offset': 'feature'})
         # Remove first year if missing predictors
         if X.isel(epi_year=0).isnull().any():
@@ -118,7 +120,7 @@ class FourierInputCreator:
         return xarray.Dataset({
             'X': X,
             'y': y
-        })
+        }), mapping
 
     def create_model_input(self, training_data: pd.DataFrame) -> FourierModelInput:
         """

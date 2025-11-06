@@ -64,7 +64,7 @@ class SeasonalFourierRegressionV2:
         self._params = params
 
     def predict(self, training_data: pd.DataFrame, future_data: pd.DataFrame) -> pd.DataFrame:
-        ds = FourierInputCreator(params=self._params.input_params).v2(training_data, future_data)
+        ds, mapping = FourierInputCreator(params=self._params.input_params).v2(training_data, future_data)
         fourier_model = FourierParametrization(self._params.fourier_hyperparameters)
         #ds = ds.expand_dims(fourier_model.extra_dims)
         coords = {dim: ds[dim].values for dim in ds.dims} | fourier_model.extra_dims
@@ -79,6 +79,21 @@ class SeasonalFourierRegressionV2:
                 approx = pm.fit(n=inference_params.n_iterations, method='advi')
                 idata = approx.sample(inference_params.n_samples)
             posterior_predictive = pm.sample_posterior_predictive(idata, var_names=['y_obs', 'A']).posterior_predictive
+        # Extract predictions
+
+        samples = posterior_predictive['y_obs'].stack(samples=('chain', 'draw'))
+        indices =np.random.choice(samples.sizes['samples'], replace=True, size=inference_params.n_samples)
+        samples = np.maximum(0,np.expm1(samples.isel(samples=indices)))
+        colnames = ['location', 'time_period'] + [f'sample_{i}' for i in range(inference_params.n_samples)]
+        rows = []
+        for row in future_data.itertuples():
+            location = row.location
+            time_period = row.time_period
+            coords = mapping[str(time_period)]
+            sample_values = samples.sel(location=location, **coords.model_dump()).values
+            new_row = [location, time_period] + sample_values.tolist()
+            rows.append(new_row)
+        return pd.DataFrame(rows, columns=colnames)
 
 class SeasonalFourierRegression:
     """

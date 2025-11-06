@@ -17,7 +17,7 @@ class TestFourierInputCreatorV2:
         """Test basic v2 workflow with training and future data."""
         params = FourierInputCreator.Params(lag=3, seasonal_params=SeasonalXArray.Params(split_season_index=6))
         #dataset = SeasonalXArray(params).get_dataset(simple_monthly_data)
-        ds = FourierInputCreator(params=params).v2(simple_monthly_data, simple_future_data)
+        ds, mapping = FourierInputCreator(params=params).v2(simple_monthly_data, simple_future_data)
         assert isinstance(ds, xarray.Dataset)
         assert ds.X.shape[-1] == 3
         assert not ds.X.isnull().any()  # No NaNs in X
