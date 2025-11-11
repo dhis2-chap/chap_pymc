@@ -108,8 +108,8 @@ class FourierInputCreator:
         ds, mapping = sx.get_dataset(data_frame)
         y = ds['y']
 
-        y_mean = y.mean(dim=('epi_year', 'epi_offset'))
-        y_std = y.std(dim=('epi_year', 'epi_offset'))
+        y_mean = y.mean(dim=('epi_year', 'epi_offset'), skipna=True)
+        y_std = y.std(dim=('epi_year', 'epi_offset'), skipna=True)
         n_params = NormalizationParams(
             mean=y_mean,
             std=y_std
@@ -122,6 +122,7 @@ class FourierInputCreator:
         X = SeasonalXArray(params).get_dataset(training_data)[0]['mean_temperature']
         X = X.isel(epi_offset=slice(-self._lag, None))
         X = X.rename({'epi_offset': 'feature'})
+        X = (X - X.mean(dim=('epi_year','feature'))) / X.std(dim=('epi_year','feature'))
         # Remove first year if missing predictors
         if X.isel(epi_year=0).isnull().any():
             X = X.isel(epi_year=slice(1, None))

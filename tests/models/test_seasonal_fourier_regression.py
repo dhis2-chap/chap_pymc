@@ -54,9 +54,15 @@ def test_viet_full_year(viet_full_year):
             continue
         test_seasonal_fourier_regression_advi(viet_instance, t)
 
-def test_viet_regression(viet_full_year):
+@pytest.fixture
+def full_inference_params():
+    return InferenceParams(draws=1000,
+                           tune=1000)
+
+def test_viet_regression(viet_full_year, full_inference_params):
     training_df, future_df = next(viet_full_year)
-    model = SeasonalFourierRegressionV2()
+    model = SeasonalFourierRegressionV2(SeasonalFourierRegressionV2.Params(inference_params=full_inference_params),
+                                        name='viet_regression',)
     ds, mapping = model.get_input_data(future_df, training_df)
     samples = model.get_raw_samples(ds)
     median = samples.median(dim='samples')

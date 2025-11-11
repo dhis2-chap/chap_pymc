@@ -4,11 +4,13 @@ SeasonalFourierRegression - Fourier-based seasonal disease forecasting model
 import logging
 from typing import Any
 
+import arviz
 import numpy as np
 import pandas as pd
 import pydantic
 import pymc as pm
 import xarray
+from matplotlib import pyplot as plt
 from pandas import DataFrame
 from xarray import DataArray, Dataset
 
@@ -19,6 +21,7 @@ from chap_pymc.curve_parametrizations.fourier_parametrization import (
 from chap_pymc.inference_params import InferenceParams
 from chap_pymc.transformations.model_input_creator import FourierInputCreator, NormalizationParams
 from chap_pymc.transformations.seasonal_xarray import TimeCoords
+from chap_pymc.util import TARGET_DIR
 
 logging.basicConfig(level=logging.INFO)
 
@@ -64,8 +67,9 @@ class SeasonalFourierRegressionV2:
         fourier_hyperparameters: FourierHyperparameters = FourierHyperparameters()
         input_params: FourierInputCreator.Params = FourierInputCreator.Params()
 
-    def __init__(self, params: Params = Params()) -> None:
+    def __init__(self, params: Params = Params(), name: str|None=None) -> None:
         self._params = params
+        self._name = name
 
     def predict(self, training_data: pd.DataFrame, future_data: pd.DataFrame) -> pd.DataFrame:
         ds, mapping = self.get_input_data(future_data, training_data)
@@ -110,8 +114,14 @@ class SeasonalFourierRegressionV2:
                 approx = pm.fit(n=inference_params.n_iterations, method='advi')
                 idata = approx.sample(inference_params.n_samples)
             posterior_predictive = pm.sample_posterior_predictive(idata, var_names=['y_obs', 'A']).posterior_predictive
+        if self._name is not None:
+            posterior_predictive.to_netcdf(TARGET_DIR / (self._name + '_posterior.nc'))
+            idata.to_netcdf(TARGET_DIR / (self._name + 'idata.nc'))
         # Extract predictions
-
+        arviz.plot_posterior(idata, var_names=['sigma', 'a_sigma'])
+        plt.show()
+        arviz.plot_posterior(idata, var_names=['a_mu'])
+        plt.show()
         samples: xarray.DataArray = posterior_predictive['y_obs'].stack(samples=('chain', 'draw'))
         return samples
 
