@@ -20,6 +20,7 @@ class FourierHyperparameters(pydantic.BaseModel):
     do_ar_effect: bool = False
     do_mixture: bool = False
     mixture_weight_prior: tuple[float, float] = (0.5, 0.5)  # U-shaped: heavy at 0 and 1, low in middle
+    use_prev_year: bool = True
 
 class FourierParametrization:
 
@@ -31,8 +32,8 @@ class FourierParametrization:
         '''Coordinates for extra dimensions used in the model.'''
         return {'harmonic': np.arange(0, self.hyper_params.n_harmonics + 1)}  # Include baseline (h=0)
 
-    def get_regression_model(self, X: xarray.DataArray, y: xarray.DataArray) -> None:
-        return self.get_model(y, A_offset=self._linear_effect(X))
+    def get_regression_model(self, X: xarray.DataArray, y: xarray.DataArray, prev_year_y: xarray.DataArray | None = None) -> None:
+        return self.get_model(y, prev_year_y=prev_year_y, A_offset=self._linear_effect(X))
 
     def _mixture_weights(self, n_years: int) -> float | Any:
         if self.hyper_params.do_mixture:
@@ -65,7 +66,7 @@ class FourierParametrization:
         mv = pmd.MvNormal(f'{dim}_mu', mu=h_mu, chol=chol, core_dims=(dim, f'{dim}_corr'), dims=('location', dim))
         return mv
 
-    def get_model(self, y: xarray.DataArray, A_offset: float | Any = 0.0) -> None:
+    def get_model(self, y: xarray.DataArray, prev_year_y: xarray.DataArray | None = None, A_offset: float | Any = 0.0) -> None:
         # Non-centered parametrization to avoid funnel geometry
         a_mu = pmd.Normal('a_mu', mu=0, sigma=1, dims=('location', 'harmonic'))
         a_sigma = pmd.HalfNormal('a_sigma', sigma=1., dims=('harmonic',))
@@ -91,6 +92,22 @@ class FourierParametrization:
         pmd.Normal('y_obs', mu=mu, sigma=sigma, dims=('location', 'epi_year', 'epi_offset'))
         #pm.Deterministic('y_obs', y_raw * sigma + mu)
         #pm.Normal('y_obs', mu=mu.values, sigma=sigma.values[:, None, None], observed=y, dims=('location', 'epi_year', 'epi_offset'))
+
+        # Previous year observation (if enabled)
+        if self.hyper_params.use_prev_year and prev_year_y is not None:
+            # Location-specific offset and noise parameters
+            offset_loc = pmd.Normal('offset_loc', mu=0, sigma=1, dims='location')
+            sigma_loc = pmd.HalfNormal('sigma_loc', sigma=0.5)
+
+            # Expected value: first month prediction (epi_offset=0) for each year
+            mu_first_month = mu.values[..., 0]
+
+            # Observation: prev_year_y = offset_loc + Normal(0, sigma_loc) + mu_first_month
+            pm.Normal('y_prev_year_obs',
+                       mu=mu_first_month + offset_loc.values[:, None],
+                       sigma=sigma_loc.values,
+                       observed=prev_year_y.values,
+                       dims=('location', 'epi_year'))
 
     def _get_flat_obs_model(self, mu: XTensorVariable, sigma: pm.HalfNormal, y: xarray.DataArray):
         missing_mask = y.isnull()

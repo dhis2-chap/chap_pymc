@@ -104,7 +104,8 @@ class SeasonalFourierRegressionV2:
         # ds = ds.expand_dims(fourier_model.extra_dims)
         coords = {dim: ds[dim].values for dim in ds.dims} | fourier_model.extra_dims
         with pm.Model(coords=coords) as model:
-            fourier_model.get_regression_model(ds.X, ds.y)
+            prev_year_y = ds.get('prev_year_y', None)  # Get from Dataset if available
+            fourier_model.get_regression_model(ds.X, ds.y, prev_year_y=prev_year_y)
 
             # Choose inference method based on inference_params.method
             inference_params = self._params.inference_params
