@@ -97,8 +97,8 @@ class FourierParametrization:
         if self.hyper_params.use_prev_year and prev_year_y is not None:
             # Location-specific offset and noise parameters
             offset_loc = pmd.Normal('offset_loc', mu=0, sigma=1, dims='location')
-            sigma_loc = pmd.HalfNormal('sigma_loc', sigma=0.5)
-
+            sigma_loc = pmd.HalfNormal('sigma_loc', sigma=1)
+            xarray.open_dataset
             # Expected value: first month prediction (epi_offset=0) for each year
             mu_first_month = mu.values[..., 0]
 

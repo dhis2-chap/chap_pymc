@@ -81,6 +81,10 @@ def viet_full_year(data_path) -> Generator[tuple[Any, Any], Any, None]:
     country = 'vietnam'
     return get_full_year(country, data_path)
 
+@pytest.fixture
+def viet_first_instance(viet_full_year)->tuple[DataSet, DataSet]:
+    return next(viet_full_year)
+
 class Coords(pydantic.BaseModel):
     locations: list[str]
     years: list[int]

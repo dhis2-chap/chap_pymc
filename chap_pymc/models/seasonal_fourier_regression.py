@@ -79,6 +79,7 @@ class SeasonalFourierRegressionV2:
 
     def get_input_data(self, future_data: DataFrame, training_data: DataFrame) -> tuple[Dataset, dict[str, TimeCoords]]:
         ds, mapping = FourierInputCreator(params=self._params.input_params).v2(training_data, future_data)
+
         return ds, mapping
 
     def get_predictions_df(self, future_data: DataFrame, mappings: tuple[dict[str, TimeCoords], NormalizationParams], samples: DataArray) -> DataFrame:
@@ -118,11 +119,12 @@ class SeasonalFourierRegressionV2:
         if self._name is not None:
             posterior_predictive.to_netcdf(TARGET_DIR / (self._name + '_posterior.nc'))
             idata.to_netcdf(TARGET_DIR / (self._name + 'idata.nc'))
+            ds.to_netcdf(TARGET_DIR / (self._name + '_ds.nc'))
         # Extract predictions
-        arviz.plot_posterior(idata, var_names=['sigma', 'a_sigma'])
-        plt.show()
-        arviz.plot_posterior(idata, var_names=['a_mu'])
-        plt.show()
+        #arviz.plot_posterior(idata, var_names=['sigma', 'a_sigma'])
+        #plt.show()
+        #arviz.plot_posterior(idata, var_names=['a_mu'])
+        #plt.show()
         samples: xarray.DataArray = posterior_predictive['y_obs'].stack(samples=('chain', 'draw'))
         return samples
 

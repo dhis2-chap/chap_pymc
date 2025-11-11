@@ -118,8 +118,8 @@ class FourierInputCreator:
 
         first_month = int(str(future_data['time_period'].min()).split('-')[1])-1
         params.split_season_index = first_month
-        last_month = (first_month - 1) % 12
-
+        #last_month = (first_month - 1) % 12
+        last_month  = y.sizes['epi_offset']-y.isel(epi_year=-2).isnull().all(dim='location').values[::-1].argmin()-1
         # Get last_month value from each year for each location
         prev_year_y = y.sel(epi_offset=last_month)  # dims: (location, epi_year)
         # Roll values so epi_year=k contains the value from epi_year=k-1
