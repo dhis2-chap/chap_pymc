@@ -8,7 +8,7 @@ import pymc.dims as pmd
 import pytensor.tensor as pt
 import pytensor.xtensor as px
 import xarray
-from pytensor.xtensor.type import as_xtensor
+from pytensor.xtensor.type import as_xtensor, XTensorVariable
 
 from chap_pymc.transformations.model_input_creator import FourierModelInput
 
@@ -66,16 +66,12 @@ class FourierParametrization:
         return mv
 
     def get_model(self, y: xarray.DataArray, A_offset: float | Any = 0.0) -> None:
-        missing_mask = y.isnull()
+        # Non-centered parametrization to avoid funnel geometry
         a_mu = pmd.Normal('a_mu', mu=0, sigma=1, dims=('location', 'harmonic'))
-        #a_mu = self._get_mv_harmonic('harmonic', pm.modelcontext(None).coords)
-        # ha_sigma = pmd.HalfNormal('harmonic_a_sigma', sigma=1, dims=('harmonic',))
-        a_sigma = pmd.HalfNormal('a_sigma', sigma=2., dims=('harmonic',))
-        #A = a_mu + self._get_mv_harmonic('harmonic', pm.modelcontext().coords)
-        A = pmd.Normal('A', mu=0, sigma=a_sigma, dims=('location', 'epi_year', 'harmonic')) + a_mu
-        # pm.LKJCholeskyCov
-        # pmd.MvNormal
-        #A = pm.MvNormal
+        a_sigma = pmd.HalfNormal('a_sigma', sigma=1., dims=('harmonic',))
+        l_sigma = pmd.HalfNormal('l_sigma', sigma=1., dims=('location',))
+        A_raw = pmd.Normal('A_raw', mu=0, sigma=1, dims=('location', 'epi_year', 'harmonic'))
+        A = pmd.Deterministic('A', a_mu + A_raw * a_sigma * l_sigma, dims=('location', 'epi_year', 'harmonic'))
         s = A + A_offset
         ar_effect = self._ar_effect(y) if self.hyper_params.do_ar_effect else 0
         mu = self._calculate_mu(s, n_months=y.shape[-1]) + ar_effect
@@ -83,20 +79,26 @@ class FourierParametrization:
                                mu * self._mixture_weights(n_years=y.sizes['epi_year']),
                                dims=('location', 'epi_year', 'epi_offset'))
                                # Shape: (location, epi_year, epi_offset)
-        sigma = pmd.HalfNormal('sigma', sigma=1)
+        # Hierarchical observation noise
+        sigma_scale = pmd.HalfNormal('sigma_scale', sigma=0.5)
+        sigma = pmd.HalfNormal('sigma', sigma=sigma_scale)
 
         # Important! Using pmd in the observed statement seems to mess up the inference. Use raw values instead.
         # Careful with broadcasting here: sigma is (location,) and mu is (location, epi_year, epi_offset)
-        mv = missing_mask.values
-        flat_mu = mu.values[~mv]
-        flat_sigma=sigma.values
-        #flat_sigma = pm.math.broadcast_to(sigma.values[:, None, None], mu.values.shape)[~mv]
-        pm.Normal('flat_observed', flat_mu, sigma=flat_sigma, observed=y.values[~mv])
-        pmd.Normal('y_obs', mu=mu, sigma=sigma, dims=('location', 'epi_year', 'epi_offset'))
-        #
 
+        self._get_flat_obs_model(mu, sigma, y)
+        #y_raw = pmd.Normal('y_raw', mu=0, sigma=1, dims=('location', 'epi_year', 'epi_offset'))
+        pmd.Normal('y_obs', mu=mu, sigma=sigma, dims=('location', 'epi_year', 'epi_offset'))
+        #pm.Deterministic('y_obs', y_raw * sigma + mu)
         #pm.Normal('y_obs', mu=mu.values, sigma=sigma.values[:, None, None], observed=y, dims=('location', 'epi_year', 'epi_offset'))
 
+    def _get_flat_obs_model(self, mu: XTensorVariable, sigma: pm.HalfNormal, y: xarray.DataArray):
+        missing_mask = y.isnull()
+        mv = missing_mask.values
+        flat_mu = mu.values[~mv]
+        flat_sigma = sigma.values
+        # flat_sigma = pm.math.broadcast_to(sigma.values[:, None, None], mu.values.shape)[~mv]
+        pm.Normal('flat_observed', flat_mu, sigma=flat_sigma, observed=y.values[~mv])
 
     def _ar_effect(self, y: xarray.DataArray) -> Any:
         L, Y, M = y.shape

@@ -10,7 +10,7 @@ class InferenceParams(BaseModel):
     draws: int = 500
     tune: int = 500
     chains: int = 4
-    target_accept: float = 0.9
+    target_accept: float = 0.95
 
     # ADVI parameters
     n_iterations: int = 200_000

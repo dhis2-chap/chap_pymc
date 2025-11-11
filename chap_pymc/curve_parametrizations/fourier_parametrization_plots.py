@@ -84,18 +84,22 @@ def plot_vietnam_faceted_predictions(
 
     Args:
         y: xarray.DataArray with observed data, dims=(location, epi_year, epi_offset)
-        mu_mean: Posterior mean predictions, shape (location, epi_year, epi_offset)
-        mu_lower: Lower credible interval, shape (location, epi_year, epi_offset)
-        mu_upper: Upper credible interval, shape (location, epi_year, epi_offset)
+        mu_mean: xarray.DataArray with posterior mean predictions, dims=(location, epi_year, epi_offset)
+        mu_lower: xarray.DataArray with lower credible interval, dims=(location, epi_year, epi_offset)
+        mu_upper: xarray.DataArray with upper credible interval, dims=(location, epi_year, epi_offset)
         coords: Dictionary with 'location', 'epi_year', 'epi_offset' coordinates
         n_locations_to_plot: Maximum number of locations to plot
         output_file: Path to save the plot
     """
-    n_locations = min(n_locations_to_plot, len(coords['location']))
-    n_years = len(coords['epi_year'])
+    # Get coordinate values from DataArrays
+    locations = y.location.values[:n_locations_to_plot]
+    years = y.epi_year.values
+    n_locations = len(locations)
+    n_years = len(years)
 
     fig, axes = plt.subplots(n_years, n_locations,
-                            figsize=(4 * n_locations, 2.5 * n_years))
+                            figsize=(4 * n_locations, 2.5 * n_years),
+                            sharey=True)
 
     # Handle single location or single year case
     if n_years == 1 and n_locations == 1:
@@ -105,33 +109,35 @@ def plot_vietnam_faceted_predictions(
     elif n_locations == 1:
         axes = axes.reshape(-1, 1)
 
-    months = np.arange(y.values.shape[-1])
-
-    for year_idx in range(n_years):
-        for loc_idx in range(n_locations):
+    for year_idx, year in enumerate(years):
+        for loc_idx, location in enumerate(locations):
             ax = axes[year_idx, loc_idx]
-            location_name = coords['location'][loc_idx]
 
-            # Observed data
-            y_obs = y.values[loc_idx, year_idx, :]
-            ax.plot(months, y_obs, 'o-', alpha=0.7, label='Observed', color='C0', markersize=3)
+            # Select data using .sel() with coordinate values
+            y_obs = y.sel(location=location, epi_year=year)
+            y_pred = mu_mean.sel(location=location, epi_year=year)
+            lower = mu_lower.sel(location=location, epi_year=year)
+            upper = mu_upper.sel(location=location, epi_year=year)
 
-            # Posterior mean
-            y_pred = mu_mean.values[loc_idx, year_idx, :]
-            ax.plot(months, y_pred, '--', alpha=0.7, label='Predicted', color='C1')
+            # Use epi_offset coordinate for x-axis
+            months = y_obs.epi_offset.values
 
-            # Credible interval
-            lower = mu_lower.values[loc_idx, year_idx, :]
-            upper = mu_upper.values[loc_idx, year_idx, :]
-            ax.fill_between(months, lower, upper, alpha=0.2, color='C1')
+            # Plot observed data
+            ax.plot(months, y_obs.values, 'o-', alpha=0.7, label='Observed', color='C0', markersize=3)
+
+            # Plot posterior mean
+            ax.plot(months, y_pred.values, '--', alpha=0.7, label='Predicted', color='C1')
+
+            # Plot credible interval
+            ax.fill_between(months, lower.values, upper.values, alpha=0.2, color='C1')
 
             # Set title for top row (location names)
             if year_idx == 0:
-                ax.set_title(f'{location_name}', fontsize=9)
+                ax.set_title(f'{location}', fontsize=9)
 
             # Set ylabel for first column (year labels)
             if loc_idx == 0:
-                ax.set_ylabel(f'Year {year_idx}\nLog(Cases)', fontsize=8)
+                ax.set_ylabel(f'Year {year}\nLog(Cases)', fontsize=8)
 
             # Set xlabel for bottom row
             if year_idx == n_years - 1:
@@ -139,6 +145,7 @@ def plot_vietnam_faceted_predictions(
 
             ax.grid(True, alpha=0.3)
             ax.tick_params(labelsize=7)
+            ax.set_ylim(-2.5, 2.5)
 
             # Only show legend on first subplot
             if year_idx == 0 and loc_idx == 0:
