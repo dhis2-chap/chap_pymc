@@ -118,6 +118,14 @@ class FourierInputCreator:
 
         first_month = int(str(future_data['time_period'].min()).split('-')[1])-1
         params.split_season_index = first_month
+        last_month = (first_month - 1) % 12
+
+        # Get last_month value from each year for each location
+        prev_year_y = y.sel(epi_offset=last_month)  # dims: (location, epi_year)
+        # Roll values so epi_year=k contains the value from epi_year=k-1
+        # shift(epi_year=1) moves values forward: index i gets value from index i-1
+        # First year (epi_year=0) will be filled with NaN
+        prev_year_y = prev_year_y.shift(epi_year=1)
 
         X = SeasonalXArray(params).get_dataset(training_data)[0]['mean_temperature']
         X = X.isel(epi_offset=slice(-self._lag, None))
@@ -127,12 +135,13 @@ class FourierInputCreator:
         if X.isel(epi_year=0).isnull().any():
             X = X.isel(epi_year=slice(1, None))
 
-        # Subset y to match the same epi_year as X
+        # Subset y and prev_year_y to match the same epi_year as X
         y = y.sel(epi_year=X.epi_year)
+        prev_year_y = prev_year_y.sel(epi_year=X.epi_year)
 
         assert X.shape[-1] == self._params.lag
         assert not X.isnull().any(), f"NaNs found in feature array X: {X.where(X.isnull(), drop=True)}"
-        return (xarray.Dataset({'X': X,'y': y}),
+        return (xarray.Dataset({'X': X, 'y': y, 'prev_year_y': prev_year_y}),
                 (mapping,
                 n_params))
 
