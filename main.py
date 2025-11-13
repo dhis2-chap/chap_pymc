@@ -1,24 +1,24 @@
+import json
+import logging
+
 import cyclopts
 import pandas as pd
-import pydantic
+import yaml
 
+from chap_pymc.configs.chap_config import ChapConfig, FullConfig
 from chap_pymc.curve_parametrizations.fourier_parametrization import (
     FourierHyperparameters,
 )
 from chap_pymc.inference_params import InferenceParams
 from chap_pymc.models.seasonal_fourier_regression import SeasonalFourierRegression, SeasonalFourierRegressionV2
-
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 app = cyclopts.App()
 #
 @app.command()
 def train(train_data: str, model: str, model_config: str, force=False):
     return
 
-class FullConfig(InferenceParams, FourierHyperparameters):
-    ...
-
-class ChapConfig(pydantic.BaseModel):
-    user_options: FullConfig = FullConfig()
 
 
 @app.command()
@@ -41,7 +41,13 @@ def predict(model: str,
     """
     model_config = FullConfig()
     if model_config_file is not None:
-        model_config = ChapConfig.model_validate_json(open(model_config_file).read()).user_options
+        content = open(model_config_file).read()
+        logger.info(content)
+        if model_config_file.endswith('.json'):
+            data = json.loads(content)  # type: ignore
+        elif model_config_file.endswith('.yaml'):
+            data = yaml.load(content, Loader=yaml.FullLoader)
+        model_config = ChapConfig.model_validate(data).user_options
     training_df = pd.read_csv(historic_data)
     future_df = pd.read_csv(future_data)
     inference_params = InferenceParams(**model_config.model_dump())

@@ -118,6 +118,9 @@ class FourierParametrization:
         pm.Normal('flat_observed', flat_mu, sigma=flat_sigma, observed=y.values[~mv])
 
     def _ar_effect(self, y: xarray.DataArray) -> Any:
+        '''
+        Create an ar effect over the epi_offsets
+        '''
         L, Y, M = y.shape
         ar_sigma = pm.HalfNormal('ar_sigma', sigma=0.1, dims='location')
 
