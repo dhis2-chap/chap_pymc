@@ -28,7 +28,7 @@ from chap_pymc.transformations.seasonal_xarray import TimeCoords
 from chap_pymc.util import TARGET_DIR
 
 logging.basicConfig(level=logging.INFO)
-
+logger = logging.getLogger(__name__)
 
 def create_output(training_pdf: pd.DataFrame, posterior_samples: np.ndarray, n_samples: int = 1000) -> pd.DataFrame:
     """
@@ -87,7 +87,10 @@ class SeasonalFourierRegressionV2:
             q_low = samples.quantile(0.1, dim='samples')
             q_high = samples.quantile(0.9, dim='samples')
             output_file = TARGET_DIR / f'{country}_regression_fit_{first_future_period}.png'
+            logger.info(output_file)
             plot_vietnam_faceted_predictions(ds.y, median, q_low, q_high, ds.coords, output_file=output_file)
+        else:
+            raise Exception()
 
         prediction_df = self.get_predictions_df(future_data, mapping, samples)
         return prediction_df

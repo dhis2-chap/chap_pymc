@@ -80,7 +80,7 @@ def test_viet_regression(viet_first_instance, full_inference_params, idx: int = 
     training_df, future_df = viet_first_instance
     logger.info(future_df['time_period'].min())
     model = SeasonalFourierRegressionV2(
-        SeasonalFourierRegressionV2.Params(inference_params=full_inference_params, input_params=input_params),
+        SeasonalFourierRegressionV2.Params(inference_params=full_inference_params, input_params=input_params, fourier_hyperparameters=FourierHyperparameters(prior_strength=0.1),),
         name=f'viet_regression_{idx}', )
 
     ds, mapping = model.get_input_data(future_df, training_df)
