@@ -82,6 +82,11 @@ def viet_full_year(data_path) -> Generator[tuple[Any, Any], Any, None]:
     return get_full_year(country, data_path)
 
 @pytest.fixture
+def nepal_full_year() -> Generator[tuple[Any, Any], Any, None]:
+    data_path = Path('/Users/knutdr/Sources/chap_benchmarking/csv_datasets')
+    return get_full_year('nepal_evaluation_set', data_path)
+
+@pytest.fixture
 def viet_first_instance(viet_full_year)->tuple[DataSet, DataSet]:
     return next(viet_full_year)
 

@@ -15,7 +15,7 @@ from chap_pymc.curve_parametrizations.fourier_parametrization_plots import (
 )
 from chap_pymc.inference_params import InferenceParams
 from chap_pymc.transformations.model_input_creator import ModelInputCreator
-from chap_pymc.models.seasonal_fourier_regression import SeasonalFourierRegression
+from chap_pymc.models.seasonal_fourier_regression import SeasonalFourierRegression, SeasonalFourierRegressionV2
 
 
 @pytest.fixture()
@@ -127,29 +127,56 @@ def nepal_model_input(nepal_data):
 
 @pytest.mark.slow
 def test_nepal_regresion(nepal_data):
-    fourier_regression = SeasonalFourierRegression(
-        prediction_length=3,
-        lag=3,
-        fourier_hyperparameters=FourierHyperparameters(n_harmonics=2, do_mixture=True),
-        inference_params=InferenceParams(method='advi', n_iterations=100_000, progressbar=True)
+    # Split data into training and future
+    training_data = nepal_data.iloc[:-3]
+    future_data = nepal_data.iloc[-3:]
+
+    # Use V2 implementation with recent improvements
+    model = SeasonalFourierRegressionV2(
+        params=SeasonalFourierRegressionV2.Params(
+            fourier_hyperparameters=FourierHyperparameters(
+                n_harmonics=2,
+                use_prev_year=True  # Test the new prev_year feature
+            ),
+            inference_params=InferenceParams(
+                method='hmc',
+                draws=500,
+                tune=500,
+                progressbar=True
+            )
+        )
     )
-    preds, idata = fourier_regression.predict(nepal_data,  return_inference_data=True)
-    mu_posterior = idata.posterior['last_mu']  # (chain, draw, location, year, month)
-    mu_mean = mu_posterior.mean(dim=['chain', 'draw'])  # (location, year, month)
-    mu_lower = mu_posterior.quantile(0.025, dim=['chain', 'draw'])
-    mu_upper = mu_posterior.quantile(0.975, dim=['chain', 'draw'])
+
+    # Get predictions
+    preds_df = model.predict(training_data, future_data)
+
+    # Get raw samples for visualization
+    ds, mapping = model.get_input_data(future_data, training_data)
+    samples = model.get_raw_samples(ds)
+
+    # Check for NaNs
+    assert not samples.isnull().any(), "Model produced NaN predictions for Nepal data"
+
+    # Calculate statistics for plotting
+    mu_mean = samples.mean(dim='samples')
+    mu_lower = samples.quantile(0.025, dim='samples')
+    mu_upper = samples.quantile(0.975, dim='samples')
 
     # Create plot using plotting function
-    plot_vietnam_faceted_predictions(fourier_regression.model_input.y, mu_mean, mu_lower, mu_upper, fourier_regression.stored_coords, output_file='nepal_fourier_fit.png')
+    plot_vietnam_faceted_predictions(ds['y'], mu_mean, mu_lower, mu_upper,
+                                    ds.coords, output_file='nepal_fourier_fit.png')
 
 @pytest.mark.slow
-def test_full_vietnam_regression(viet_full_year):
+def test_full_vietnam_regression(viet_full_year, skip=7):
     for i, (viet_instance, future) in enumerate(viet_full_year):
-        if i<7:
+        if i<skip:
             continue
         creator = ModelInputCreator(prediction_length=3, lag=3)
         ds, mapping = creator.v2(viet_instance, future)
         test_vietnam_regression(ds, viet_idata_path=f'viet_{i}.nc', i=i)
+
+def test_full_nepal_regression(nepal_full_year):
+    test_full_vietnam_regression(nepal_full_year, skip=0)
 
 
 @pytest.fixture()

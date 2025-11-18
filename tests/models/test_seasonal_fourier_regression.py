@@ -48,23 +48,33 @@ def test_seasonal_fourier_regression_predict(viet_begin_season):
     print(predictions[predictions['location'] == predictions['location'].iloc[0]].head())
 
 #@pytest.mark.slow
-def test_viet_full_year(viet_full_year, full_inference_params):
+def test_viet_full_year(viet_full_year, full_inference_params, skip=7):
     for i, (viet_instance) in enumerate(viet_full_year):
-        if i<7:
+        if i< skip:
             continue
         test_viet_regression(viet_instance, full_inference_params, i)
+
+def test_nepal_full_year(nepal_full_year, debug_inference_params):
+    return test_viet_full_year(nepal_full_year, debug_inference_params, skip=0)
 
 @pytest.fixture
 def full_inference_params():
     return InferenceParams(draws=1000,
                            tune=1000)
 
+@pytest.fixture
+def debug_inference_params():
+    return InferenceParams(draws=10, tune=10)
+
 def test_viet_regression(viet_first_instance, full_inference_params, idx: int = 0):
     training_df, future_df = viet_first_instance
-    model = SeasonalFourierRegressionV2(SeasonalFourierRegressionV2.Params(inference_params=full_inference_params),
-                                        name=f'viet_regression_{idx}',)
+    model = SeasonalFourierRegressionV2(
+        SeasonalFourierRegressionV2.Params(inference_params=full_inference_params),
+        name=f'viet_regression_{idx}', )
+
     ds, mapping = model.get_input_data(future_df, training_df)
     samples = model.get_raw_samples(ds)
+    assert not samples.isnull().any()
     median = samples.median(dim='samples')
     q_low = samples.quantile(0.1, dim='samples')
     q_high = samples.quantile(0.9, dim='samples')
