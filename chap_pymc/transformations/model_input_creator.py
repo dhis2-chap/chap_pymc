@@ -7,6 +7,7 @@ import pandas as pd
 import pydantic
 import pytest
 import xarray
+from pydantic import Field
 from xarray import Dataset
 
 from chap_pymc.transformations.seasonal_transform import SeasonalTransform, TransformParameters
@@ -71,6 +72,7 @@ class FourierInputCreator:
     class Params(pydantic.BaseModel):
         lag: int = 3
         seasonal_params: SeasonalXArray.Params = SeasonalXArray.Params()
+        skip_seasons: list[int] = []
 
     def __init__(
         self,
@@ -107,6 +109,10 @@ class FourierInputCreator:
         data_frame['y'] = np.log1p(data_frame['disease_cases'])
         ds, mapping = sx.get_dataset(data_frame)
         y = ds['y']
+
+        for season in self._params.skip_seasons:
+            y.loc[dict(epi_year=season)] = np.nan
+
 
         y_mean = y.mean(dim=('epi_year', 'epi_offset'), skipna=True)
         y_std = y.std(dim=('epi_year', 'epi_offset'), skipna=True)
