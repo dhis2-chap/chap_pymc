@@ -24,6 +24,7 @@ class ModelInputBase:
     X: xarray.DataArray
     y: xarray.DataArray
     last_month: int
+    season_length: int = 12  # Default to months for backward compatibility
 
     def n_months(self) -> int:
         return self.y.shape[-1]
@@ -43,8 +44,8 @@ class ModelInputBase:
 @dataclasses.dataclass
 class FullModelInput(ModelInputBase):
     """Model input with xarray DataArrays containing all coordinate information."""
-    seasonal_pattern: xarray.DataArray  # (location, month)
-    seasonal_errors: xarray.DataArray  # (location, month)
+    seasonal_pattern: xarray.DataArray | None = None  # (location, month)
+    seasonal_errors: xarray.DataArray | None = None  # (location, month)
 
 @dataclasses.dataclass
 class FourierModelInput(ModelInputBase):
@@ -105,6 +106,7 @@ class FourierInputCreator:
         params = self._params.seasonal_params
         params.target_variable = 'y'
         sx = SeasonalXArray(params)
+        season_length = sx.season_length  # Extract season length from SeasonalXArray
         data_frame = data_frame.copy()
         data_frame['y'] = np.log1p(data_frame['disease_cases'])
         ds, mapping = sx.get_dataset(data_frame)
@@ -152,7 +154,9 @@ class FourierInputCreator:
 
         assert X.shape[-1] == self._params.lag
         assert not X.isnull().any(), f"NaNs found in feature array X: {X.where(X.isnull(), drop=True)}"
-        return (xarray.Dataset({'X': X, 'y': y, 'prev_year_y': prev_year_y}),
+        ds = xarray.Dataset({'X': X, 'y': y, 'prev_year_y': prev_year_y})
+        ds.attrs['season_length'] = season_length  # Store season_length as attribute
+        return (ds,
                 (mapping,
                 n_params))
 
@@ -204,7 +208,8 @@ class FourierInputCreator:
             added_last_year=add_last_year,
             prev_year_end=prev_year_end,
             y_mean=y_mean,
-            y_std=y_std
+            y_std=y_std,
+            season_length=MONTHS_PER_YEAR  # Using SeasonalTransform which is monthly-only
         )
 
     def create_X(

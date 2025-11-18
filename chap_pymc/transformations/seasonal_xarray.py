@@ -56,7 +56,7 @@ class SeasonalXArray:
         data_frame['year'] = data_frame['time_period'].apply(lambda x: int(x.split('-')[0]))
         self._min_month = self._find_min_month(data_frame) if self._params.split_season_index is None else self._params.split_season_index
         data_frame['epi_offset'] = (data_frame[self.freq_name] - self._min_month) % self.season_length
-        offset = (data_frame['month'] - self._min_month) // self.season_length
+        offset = (data_frame[self.freq_name] - self._min_month) // self.season_length
         data_frame['epi_year'] = data_frame['year'] + offset
         # Set epi_year coords to count from -N to 0, where 0 is the last season
         data_frame['epi_year'] = data_frame['epi_year'] - data_frame['epi_year'].max()

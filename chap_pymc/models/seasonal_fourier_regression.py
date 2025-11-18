@@ -26,14 +26,15 @@ from chap_pymc.util import TARGET_DIR
 logging.basicConfig(level=logging.INFO)
 
 
-def create_output(training_pdf: pd.DataFrame, posterior_samples: np.ndarray, n_samples: int = 1000) -> pd.DataFrame:
+def create_output(training_pdf: pd.DataFrame, posterior_samples: np.ndarray, n_samples: int = 1000, season_length: int = 12) -> pd.DataFrame:
     """
     Convert posterior samples to output DataFrame format.
 
     Args:
         training_pdf: Training data DataFrame with location and time_period columns
-        posterior_samples: Array of shape (n_locations, n_months, n_samples)
+        posterior_samples: Array of shape (n_locations, n_periods, n_samples)
         n_samples: Number of samples to include in output
+        season_length: Number of periods per year (12 for months, 52 for weeks)
 
     Returns:
         DataFrame with columns: location, time_period, sample_0, sample_1, ..., sample_N
@@ -42,13 +43,13 @@ def create_output(training_pdf: pd.DataFrame, posterior_samples: np.ndarray, n_s
     horizon = posterior_samples.shape[-2]
     locations = training_pdf['location'].unique()
     last_time_idx = training_pdf['time_period'].max()
-    year, month = map(int, last_time_idx.split('-'))
+    year, period = map(int, last_time_idx.split('-'))
 
     # Calculate future time periods
-    raw_months = np.arange(horizon) + month
-    new_months = (raw_months % 12) + 1
-    new_years = year + raw_months // 12
-    new_time_periods = [f'{y:d}-{m:02d}' for y, m in zip(new_years, new_months)]
+    raw_periods = np.arange(horizon) + period
+    new_periods = (raw_periods % season_length) + 1
+    new_years = year + raw_periods // season_length
+    new_time_periods = [f'{y:d}-{p:02d}' for y, p in zip(new_years, new_periods)]
 
     colnames = ['location', 'time_period'] + [f'sample_{i}' for i in range(n_samples)]
     rows = []
@@ -72,15 +73,15 @@ class SeasonalFourierRegressionV2:
         self._name = name
 
     def predict(self, training_data: pd.DataFrame, future_data: pd.DataFrame) -> pd.DataFrame:
-        ds, mapping = self.get_input_data(future_data, training_data)
+        ds, mappings = self.get_input_data(future_data, training_data)
         samples = self.get_raw_samples(ds)
-        prediction_df = self.get_predictions_df(future_data, mapping, samples)
+        prediction_df = self.get_predictions_df(future_data, mappings, samples)
         return prediction_df
 
-    def get_input_data(self, future_data: DataFrame, training_data: DataFrame) -> tuple[Dataset, dict[str, TimeCoords]]:
-        ds, mapping = FourierInputCreator(params=self._params.input_params).v2(training_data, future_data)
+    def get_input_data(self, future_data: DataFrame, training_data: DataFrame) -> tuple[Dataset, tuple[dict[str, TimeCoords], NormalizationParams]]:
+        ds, mappings = FourierInputCreator(params=self._params.input_params).v2(training_data, future_data)
 
-        return ds, mapping
+        return ds, mappings
 
     def get_predictions_df(self, future_data: DataFrame, mappings: tuple[dict[str, TimeCoords], NormalizationParams], samples: DataArray) -> DataFrame:
         mapping, n_params = mappings
@@ -101,7 +102,8 @@ class SeasonalFourierRegressionV2:
         return prediction_df
 
     def get_raw_samples(self, ds: xarray.Dataset) -> xarray.DataArray:
-        fourier_model = FourierParametrization(self._params.fourier_hyperparameters)
+        season_length = ds.attrs.get('season_length', 12)  # Get season_length from Dataset attributes
+        fourier_model = FourierParametrization(self._params.fourier_hyperparameters, season_length=season_length)
         # ds = ds.expand_dims(fourier_model.extra_dims)
         coords = {dim: ds[dim].values for dim in ds.dims} | fourier_model.extra_dims
         with pm.Model(coords=coords) as model:
@@ -207,7 +209,8 @@ class SeasonalFourierRegression:
             y = model_input.y
 
             fourier_model = FourierParametrization(
-                self._fourier_hyperparameters
+                self._fourier_hyperparameters,
+                season_length=model_input.season_length
             )
             fourier_model.get_regression_model(X, y)
 
@@ -238,7 +241,7 @@ class SeasonalFourierRegression:
         predictions_samples = np.maximum(predictions_samples, 0)
 
         # Create output DataFrame
-        predictions_df = create_output(training_data, predictions_samples, n_samples=n_samples)
+        predictions_df = create_output(training_data, predictions_samples, n_samples=n_samples, season_length=model_input.season_length)
 
         if return_inference_data:
             return predictions_df, idata
