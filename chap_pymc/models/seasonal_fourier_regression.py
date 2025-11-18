@@ -4,13 +4,11 @@ SeasonalFourierRegression - Fourier-based seasonal disease forecasting model
 import logging
 from typing import Any
 
-import arviz
 import numpy as np
 import pandas as pd
 import pydantic
 import pymc as pm
 import xarray
-from matplotlib import pyplot as plt
 from pandas import DataFrame
 from xarray import DataArray, Dataset
 
@@ -18,13 +16,19 @@ from chap_pymc.curve_parametrizations.fourier_parametrization import (
     FourierHyperparameters,
     FourierParametrization,
 )
+from chap_pymc.curve_parametrizations.fourier_parametrization_plots import (
+    plot_vietnam_faceted_predictions,
+)
 from chap_pymc.inference_params import InferenceParams
-from chap_pymc.transformations.model_input_creator import FourierInputCreator, NormalizationParams
+from chap_pymc.transformations.model_input_creator import (
+    FourierInputCreator,
+    NormalizationParams,
+)
 from chap_pymc.transformations.seasonal_xarray import TimeCoords
 from chap_pymc.util import TARGET_DIR
 
 logging.basicConfig(level=logging.INFO)
-
+logger = logging.getLogger(__name__)
 
 def create_output(training_pdf: pd.DataFrame, posterior_samples: np.ndarray, n_samples: int = 1000, season_length: int = 12) -> pd.DataFrame:
     """
@@ -72,10 +76,24 @@ class SeasonalFourierRegressionV2:
         self._params = params
         self._name = name
 
-    def predict(self, training_data: pd.DataFrame, future_data: pd.DataFrame) -> pd.DataFrame:
-        ds, mappings = self.get_input_data(future_data, training_data)
+    def predict(self, training_data: pd.DataFrame, future_data: pd.DataFrame,
+                save_plot: bool = True, country: str = 'model') -> pd.DataFrame:
+        ds, mapping = self.get_input_data(future_data, training_data)
         samples = self.get_raw_samples(ds)
-        prediction_df = self.get_predictions_df(future_data, mappings, samples)
+
+        # Automatically plot predictions if requested and model has a name
+        if save_plot and self._name is not None:
+            first_future_period = str(future_data['time_period'].min())
+            median = samples.median(dim='samples')
+            q_low = samples.quantile(0.1, dim='samples')
+            q_high = samples.quantile(0.9, dim='samples')
+            output_file = TARGET_DIR / f'{country}_regression_fit_{first_future_period}.png'
+            logger.info(output_file)
+            plot_vietnam_faceted_predictions(ds.y, median, q_low, q_high, ds.coords, output_file=output_file)
+        else:
+            raise Exception()
+
+        prediction_df = self.get_predictions_df(future_data, mapping, samples)
         return prediction_df
 
     def get_input_data(self, future_data: DataFrame, training_data: DataFrame) -> tuple[Dataset, tuple[dict[str, TimeCoords], NormalizationParams]]:

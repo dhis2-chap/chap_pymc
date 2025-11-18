@@ -73,7 +73,7 @@ class FourierInputCreator:
     class Params(pydantic.BaseModel):
         lag: int = 3
         seasonal_params: SeasonalXArray.Params = SeasonalXArray.Params()
-        skip_seasons: list[int] = []
+        skip_bottom_n_seasons: int = 0
 
     def __init__(
         self,
@@ -105,6 +105,7 @@ class FourierInputCreator:
         data_frame = pd.concat([training_data, future_data], ignore_index=True)
         params = self._params.seasonal_params
         params.target_variable = 'y'
+        assert params.split_season_index is None
         sx = SeasonalXArray(params)
         season_length = sx.season_length  # Extract season length from SeasonalXArray
         data_frame = data_frame.copy()
@@ -112,8 +113,18 @@ class FourierInputCreator:
         ds, mapping = sx.get_dataset(data_frame)
         y = ds['y']
 
-        for season in self._params.skip_seasons:
-            y.loc[dict(epi_year=season)] = np.nan
+        if self._params.skip_bottom_n_seasons > 0:
+            # Calculate mean for each season across locations and offsets
+            season_means = y.mean(dim=('location', 'epi_offset'))
+            # Find the n seasons with lowest mean (argsort returns indices)
+            args = season_means.argsort().values
+            args = args[args!=0] #Don't remove first year
+            bottom_season_indices = args[:self._params.skip_bottom_n_seasons]
+            # Get the actual epi_year coordinate values at those indices
+            bottom_season_coords = season_means.epi_year.values[bottom_season_indices]
+            # Set those seasons to nan
+            for season in bottom_season_coords:
+                y.loc[dict(epi_year=season)] = np.nan
 
 
         y_mean = y.mean(dim=('epi_year', 'epi_offset'), skipna=True)
@@ -130,7 +141,6 @@ class FourierInputCreator:
         y = (y-y_mean)/y_std
 
         first_month = int(str(future_data['time_period'].min()).split('-')[1])-1
-        params.split_season_index = first_month
         #last_month = (first_month - 1) % 12
         last_month  = y.sizes['epi_offset']-y.isel(epi_year=-2).isnull().all(dim='location').values[::-1].argmin()-1
         # Get last_month value from each year for each location
@@ -139,14 +149,7 @@ class FourierInputCreator:
         # shift(epi_year=1) moves values forward: index i gets value from index i-1
         # First year (epi_year=0) will be filled with NaN
         prev_year_y = prev_year_y.shift(epi_year=1)
-
-        X = SeasonalXArray(params).get_dataset(training_data)[0]['mean_temperature']
-        X = X.isel(epi_offset=slice(-self._lag, None))
-        X = X.rename({'epi_offset': 'feature'})
-        X = (X - X.mean(dim=('epi_year','feature'))) / X.std(dim=('epi_year','feature'))
-        # Remove first year if missing predictors
-        if X.isel(epi_year=0).isnull().any():
-            X = X.isel(epi_year=slice(1, None))
+        X = self.X_v2(training_data, first_month)
 
         # Subset y and prev_year_y to match the same epi_year as X
         y = y.sel(epi_year=X.epi_year)
@@ -159,6 +162,18 @@ class FourierInputCreator:
         return (ds,
                 (mapping,
                 n_params))
+
+    def X_v2(self, training_data: pd.DataFrame, first_month: int) -> xarray.DataArray:
+        params = self._params.seasonal_params.copy()
+        params.split_season_index = first_month
+        X = SeasonalXArray(params).get_dataset(training_data)[0]['mean_temperature']
+        X = X.isel(epi_offset=slice(-self._lag, None))
+        X = X.rename({'epi_offset': 'feature'})
+        X = (X - X.mean(dim=('epi_year','feature'))) / X.std(dim=('epi_year','feature'))
+        # Remove first year if missing predictors
+        if X.isel(epi_year=0).isnull().any():
+            X = X.isel(epi_year=slice(1, None))
+        return X
 
     def create_model_input(self, training_data: pd.DataFrame) -> FourierModelInput:
         """

@@ -114,6 +114,12 @@ def simple_monthly_data(simple_coords) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 @pytest.fixture
+def weekly_data() -> pd.DataFrame:
+    path = Path('/Users/knutdr/Sources/chap_benchmarking/csv_datasets')
+    df = pd.read_csv(path / 'ewars_weekly.csv')
+    return df
+
+@pytest.fixture
 def simple_future_data(simple_coords) -> pd.DataFrame:
     months = [1, 2, 3]
     rows = []

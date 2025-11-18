@@ -1,5 +1,6 @@
 import json
 import logging
+from pathlib import Path
 
 import cyclopts
 import pandas as pd
@@ -11,6 +12,8 @@ from chap_pymc.curve_parametrizations.fourier_parametrization import (
 )
 from chap_pymc.inference_params import InferenceParams
 from chap_pymc.models.seasonal_fourier_regression import SeasonalFourierRegression, SeasonalFourierRegressionV2
+from chap_pymc.transformations.model_input_creator import FourierInputCreator
+
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 app = cyclopts.App()
@@ -47,14 +50,21 @@ def predict(model: str,
             data = json.loads(content)  # type: ignore
         elif model_config_file.endswith('.yaml'):
             data = yaml.load(content, Loader=yaml.FullLoader)
+        if 'user_options' not in data:
+            data['user_options']  = {}
+        data['user_options'] |= {'skip_bottom_n_seasons': 2, 'use_ar': True}
         model_config = ChapConfig.model_validate(data).user_options
     training_df = pd.read_csv(historic_data)
     future_df = pd.read_csv(future_data)
     inference_params = InferenceParams(**model_config.model_dump())
     fourier_hyperparameters = FourierHyperparameters(**model_config.model_dump())
+    input_params = FourierInputCreator.Params(**model_config.model_dump())
+    assert input_params.skip_bottom_n_seasons == 2, data
     params=SeasonalFourierRegressionV2.Params(inference_params=inference_params,
-                                              fourier_hyperparameters=fourier_hyperparameters)
-    regression_model = SeasonalFourierRegressionV2(params)
+                                              fourier_hyperparameters=fourier_hyperparameters,
+                                              input_params=input_params)
+    name = Path(historic_data).stem
+    regression_model = SeasonalFourierRegressionV2(params, name=name)
     # model = SeasonalFourierRegression(
     #     prediction_length=3,
     #     lag=3,
