@@ -52,13 +52,14 @@ def test_seasonal_fourier_regression_predict(viet_begin_season):
     print("\nSample predictions for first location:")
     print(predictions[predictions['location'] == predictions['location'].iloc[0]].head())
 
-#@pytest.mark.slow
+@pytest.mark.slow
 def test_viet_full_year(viet_full_year, full_inference_params, skip=7, country='vietnam', input_params=FourierInputCreator.Params()):
     for i, (viet_instance) in enumerate(viet_full_year):
         if i< skip:
             continue
         test_viet_regression(viet_instance, full_inference_params, i, country=country, input_params=input_params)
 
+@pytest.mark.slow
 def test_nepal_full_year(nepal_full_year, full_inference_params, debug_inference_params, nepal_input_params):
     return test_viet_full_year(nepal_full_year, full_inference_params, skip=9, country='nepal', input_params=nepal_input_params)
 

@@ -8,7 +8,7 @@ import pymc.dims as pmd
 import pytensor.tensor as pt
 import pytensor.xtensor as px
 import xarray
-from pytensor.xtensor.type import as_xtensor, XTensorVariable
+from pytensor.xtensor.type import XTensorVariable, as_xtensor
 
 from chap_pymc.transformations.model_input_creator import FourierModelInput
 
@@ -21,6 +21,7 @@ class FourierHyperparameters(pydantic.BaseModel):
     do_mixture: bool = False
     mixture_weight_prior: tuple[float, float] = (0.5, 0.5)  # U-shaped: heavy at 0 and 1, low in middle
     use_prev_year: bool = True
+    prior_strength: float = 1.0  # Scale factor for prior standard deviations. <1.0 for limited data (tighter priors), >1.0 for more flexibility
 
 class FourierParametrization:
 
@@ -68,9 +69,10 @@ class FourierParametrization:
 
     def get_model(self, y: xarray.DataArray, prev_year_y: xarray.DataArray | None = None, A_offset: float | Any = 0.0) -> None:
         # Non-centered parametrization to avoid funnel geometry
-        a_mu = pmd.Normal('a_mu', mu=0, sigma=1, dims=('location', 'harmonic'))
-        a_sigma = pmd.HalfNormal('a_sigma', sigma=1., dims=('harmonic',))
-        l_sigma = pmd.HalfNormal('l_sigma', sigma=1., dims=('location',))
+        strength = self.hyper_params.prior_strength
+        a_mu = pmd.Normal('a_mu', mu=0, sigma=1.0 * strength, dims=('location', 'harmonic'))
+        a_sigma = pmd.HalfNormal('a_sigma', sigma=1.0 * strength, dims=('harmonic',))
+        l_sigma = pmd.HalfNormal('l_sigma', sigma=1.0 * strength, dims=('location',))
         A_raw = pmd.Normal('A_raw', mu=0, sigma=1, dims=('location', 'epi_year', 'harmonic'))
         A = pmd.Deterministic('A', a_mu + A_raw * a_sigma * l_sigma, dims=('location', 'epi_year', 'harmonic'))
         s = A + A_offset
@@ -81,7 +83,7 @@ class FourierParametrization:
                                dims=('location', 'epi_year', 'epi_offset'))
                                # Shape: (location, epi_year, epi_offset)
         # Hierarchical observation noise
-        sigma_scale = pmd.HalfNormal('sigma_scale', sigma=0.5)
+        sigma_scale = pmd.HalfNormal('sigma_scale', sigma=0.5 * strength)
         sigma = pmd.HalfNormal('sigma', sigma=sigma_scale)
 
         # Important! Using pmd in the observed statement seems to mess up the inference. Use raw values instead.
@@ -96,9 +98,8 @@ class FourierParametrization:
         # Previous year observation (if enabled)
         if self.hyper_params.use_prev_year and prev_year_y is not None:
             # Location-specific offset and noise parameters
-            offset_loc = pmd.Normal('offset_loc', mu=0, sigma=1, dims='location')
-            sigma_loc = pmd.HalfNormal('sigma_loc', sigma=1)
-            xarray.open_dataset
+            offset_loc = pmd.Normal('offset_loc', mu=0, sigma=1 * strength, dims='location')
+            sigma_loc = pmd.HalfNormal('sigma_loc', sigma=1 * strength)
             # Expected value: first month prediction (epi_offset=0) for each year
             mu_first_month = mu.values[..., 0]
 
@@ -147,7 +148,8 @@ class FourierParametrization:
         return mu
 
     def _linear_effect(self, X: xarray.DataArray) -> Any:
-        beta = pmd.Normal('slope', mu=0, sigma=10, dims=('feature', 'harmonic'))
+        strength = self.hyper_params.prior_strength
+        beta = pmd.Normal('slope', mu=0, sigma=10 * strength, dims=('feature', 'harmonic'))
         # This is a batched matrix multiplication over the feature dimension
         result_tensor = pt.tensordot(X.values, beta.values, axes=[[2], [0]])
         return pmd.Deterministic('linear_effect', result_tensor, dims=('location', 'epi_year', 'harmonic'))
