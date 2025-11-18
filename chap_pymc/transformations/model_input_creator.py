@@ -110,10 +110,15 @@ class FourierInputCreator:
 
         y_mean = y.mean(dim=('epi_year', 'epi_offset'), skipna=True)
         y_std = y.std(dim=('epi_year', 'epi_offset'), skipna=True)
+        # Set mean to 0 and std to 1 where they're NaN (no data or no variance)
+        y_mean = y_mean.where(~y_mean.isnull(), 0.0)
+        y_std = y_std.where(~y_std.isnull(), 1.0)
         n_params = NormalizationParams(
             mean=y_mean,
             std=y_std
         )
+        assert not n_params.std.isnull().any(), n_params.std
+        assert not n_params.mean.isnull().any(), n_params.mean
         y = (y-y_mean)/y_std
 
         first_month = int(str(future_data['time_period'].min()).split('-')[1])-1

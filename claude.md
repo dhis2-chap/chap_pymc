@@ -21,6 +21,7 @@ DONT access private variables in tests (e.g. _variable), use public API only
 
 # Commits
 * Always commit after completing a logical unit of work with passing tests
+* Always tag commits with jira ids
 
 # Jira
 * epics are large projects/pieces of work that can take up to 6 months to finish
