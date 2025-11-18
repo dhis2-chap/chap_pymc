@@ -124,6 +124,42 @@ def simple_future_data(simple_coords) -> pd.DataFrame:
         } | {var: float(i*t + 100) for t, var in enumerate(simple_coords.variables)})
     return pd.DataFrame(rows)
 
+@pytest.fixture
+def weekly_data() -> pd.DataFrame:
+    """Create weekly time series data with date range format.
+
+    Returns DataFrame with columns: location, time_period, disease_cases, mean_temperature
+    Uses format: "YYYY-MM-DD/YYYY-MM-DD" for time_period
+    """
+    import numpy as np
+    from datetime import datetime, timedelta
+
+    # Create 3 years of weekly data
+    locations = ['LocationA', 'LocationB']
+    start_date = datetime(2020, 1, 6)  # First Monday of 2020
+    weeks = 52 * 3  # 3 years
+
+    data = []
+    for location in locations:
+        for week_num in range(weeks):
+            week_start = start_date + timedelta(weeks=week_num)
+            week_end = week_start + timedelta(days=6)
+
+            # Create seasonal pattern with 52-week period
+            week_of_year = week_start.isocalendar()[1]
+            disease_cases = 10 + 5 * np.sin(2 * np.pi * week_of_year / 52) + np.random.randn() * 0.5
+            mean_temperature = 20 + 10 * np.sin(2 * np.pi * week_of_year / 52) + np.random.randn()
+
+            time_period = f'{week_start.strftime("%Y-%m-%d")}/{week_end.strftime("%Y-%m-%d")}'
+            data.append({
+                'location': location,
+                'time_period': time_period,
+                'disease_cases': max(0, disease_cases),
+                'mean_temperature': mean_temperature
+            })
+
+    return pd.DataFrame(data)
+
 def get_full_year(country, data_path: Path) -> Generator[tuple[Any, Any], Any, None]:
     csv_file = data_path / (f'{country}.csv')
     dataset = chap_core.data.DataSet.from_csv(csv_file)

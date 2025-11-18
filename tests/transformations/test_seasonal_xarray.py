@@ -5,34 +5,7 @@ import xarray
 
 from chap_pymc.transformations.seasonal_xarray import SeasonalXArray, SeasonInformation
 
-
-@pytest.fixture
-def weekly_data() -> pd.DataFrame:
-    """Create weekly time series data for testing.
-
-    Returns DataFrame with columns: location, time_period, disease_cases
-    """
-    import numpy as np
-
-    # Create 3 years of weekly data (156 weeks total)
-    locations = ['LocationA', 'LocationB']
-    years = [2020, 2021, 2022]
-    weeks = list(range(1, 53))  # 52 weeks per year
-
-    data = []
-    for location in locations:
-        for year in years:
-            for week in weeks:
-                time_period = f'{year}-{week:02d}'
-                # Create seasonal pattern with 52-week period
-                disease_cases = 10 + 5 * np.sin(2 * np.pi * week / 52) + np.random.randn() * 0.5
-                data.append({
-                    'location': location,
-                    'time_period': time_period,
-                    'disease_cases': max(0, disease_cases)
-                })
-
-    return pd.DataFrame(data)
+# Note: weekly_data fixture is now in conftest.py
 
 
 # class TestSeasonalXArrayInit:
