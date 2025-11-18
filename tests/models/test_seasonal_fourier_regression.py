@@ -12,6 +12,9 @@ from chap_pymc.models.seasonal_fourier_regression import (
     SeasonalFourierRegressionV2,
 )
 import logging
+
+from chap_pymc.transformations.model_input_creator import FourierInputCreator
+
 logger   = logging.getLogger(__name__)
 
 
@@ -50,14 +53,14 @@ def test_seasonal_fourier_regression_predict(viet_begin_season):
     print(predictions[predictions['location'] == predictions['location'].iloc[0]].head())
 
 #@pytest.mark.slow
-def test_viet_full_year(viet_full_year, full_inference_params, skip=7):
+def test_viet_full_year(viet_full_year, full_inference_params, skip=7, country='vietnam', input_params=FourierInputCreator.Params()):
     for i, (viet_instance) in enumerate(viet_full_year):
         if i< skip:
             continue
-        test_viet_regression(viet_instance, full_inference_params, i)
+        test_viet_regression(viet_instance, full_inference_params, i, country=country, input_params=input_params)
 
-def test_nepal_full_year(nepal_full_year, full_inference_params, debug_inference_params):
-    return test_viet_full_year(nepal_full_year, debug_inference_params, skip=0)
+def test_nepal_full_year(nepal_full_year, full_inference_params, debug_inference_params, nepal_input_params):
+    return test_viet_full_year(nepal_full_year, full_inference_params, skip=9, country='nepal', input_params=nepal_input_params)
 
 @pytest.fixture
 def full_inference_params():
@@ -65,14 +68,18 @@ def full_inference_params():
                            tune=1000)
 
 @pytest.fixture
+def nepal_input_params():
+    return FourierInputCreator.Params(skip_bottom_n_seasons=2)
+
+@pytest.fixture
 def debug_inference_params():
     return InferenceParams(draws=10, tune=10)
 
-def test_viet_regression(viet_first_instance, full_inference_params, idx: int = 0):
+def test_viet_regression(viet_first_instance, full_inference_params, idx: int = 0, country='vietnam', input_params=FourierInputCreator.Params()):
     training_df, future_df = viet_first_instance
     logger.info(future_df['time_period'].min())
     model = SeasonalFourierRegressionV2(
-        SeasonalFourierRegressionV2.Params(inference_params=full_inference_params),
+        SeasonalFourierRegressionV2.Params(inference_params=full_inference_params, input_params=input_params),
         name=f'viet_regression_{idx}', )
 
     ds, mapping = model.get_input_data(future_df, training_df)
@@ -81,7 +88,7 @@ def test_viet_regression(viet_first_instance, full_inference_params, idx: int = 
     median = samples.median(dim='samples')
     q_low = samples.quantile(0.1, dim='samples')
     q_high = samples.quantile(0.9, dim='samples')
-    plot_vietnam_faceted_predictions(ds.y, median, q_low, q_high, ds.coords, output_file=f'regression_fit_{idx}.png')
+    plot_vietnam_faceted_predictions(ds.y, median, q_low, q_high, ds.coords, output_file=f'{country}_regression_fit_{idx}.png')
     prediction_df = model.get_predictions_df(future_df, mapping, samples)
     assert not prediction_df['sample_1'].isnull().any(), prediction_df['sample_1'].unique()
 
