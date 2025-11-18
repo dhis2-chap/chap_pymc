@@ -52,11 +52,41 @@ class SeasonalXArray:
     def get_dataset(self, data_frame: pd.DataFrame) -> tuple[xarray.Dataset, dict[str, TimeCoords]]:
         data_frame = data_frame.copy()
 
-        data_frame[self.freq_name] = data_frame['time_period'].apply(lambda x: int(x.split('-')[1]))-1
-        data_frame['year'] = data_frame['time_period'].apply(lambda x: int(x.split('-')[0]))
+        # Parse time_period based on format
+        # For weekly: can be "YYYY-WW" or "YYYY-MM-DD/YYYY-MM-DD" (date range)
+        # For monthly: "YYYY-MM"
+        def parse_period(time_period: str) -> tuple[int, int]:
+            """Parse time_period and return (year, period_index).
+
+            Supports:
+            - Monthly: "2024-07" -> (2024, 7)
+            - Weekly simple: "2024-15" -> (2024, 15)
+            - Weekly date range: "2024-01-08/2024-01-14" -> (2024, week_in_year)
+            """
+            if '/' in time_period:
+                # Date range format: "YYYY-MM-DD/YYYY-MM-DD"
+                # Use start date to determine week of year
+                start_date = pd.to_datetime(time_period.split('/')[0])
+                year = start_date.year
+                # Calculate week number based on calendar year (not ISO year)
+                # Week 1 starts on Jan 1, regardless of day of week
+                day_of_year = start_date.timetuple().tm_yday
+                week = (day_of_year - 1) // 7 + 1  # 1-indexed, integer division
+                return year, week
+            else:
+                # Simple format: "YYYY-PP" where PP is month or week number
+                parts = time_period.split('-')
+                year = int(parts[0])
+                period = int(parts[1])
+                return year, period
+
+        periods = data_frame['time_period'].apply(parse_period)
+        data_frame['year'] = periods.apply(lambda x: x[0])
+        data_frame[self.freq_name] = periods.apply(lambda x: x[1] - 1)  # 0-indexed
+
         self._min_month = self._find_min_month(data_frame) if self._params.split_season_index is None else self._params.split_season_index
         data_frame['epi_offset'] = (data_frame[self.freq_name] - self._min_month) % self.season_length
-        offset = (data_frame['month'] - self._min_month) // self.season_length
+        offset = (data_frame[self.freq_name] - self._min_month) // self.season_length
         data_frame['epi_year'] = data_frame['year'] + offset
         # Set epi_year coords to count from -N to 0, where 0 is the last season
         data_frame['epi_year'] = data_frame['epi_year'] - data_frame['epi_year'].max()

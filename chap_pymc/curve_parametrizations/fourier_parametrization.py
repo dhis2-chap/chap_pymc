@@ -25,8 +25,9 @@ class FourierHyperparameters(pydantic.BaseModel):
 
 class FourierParametrization:
 
-    def __init__(self, hyper_params: FourierHyperparameters = FourierHyperparameters()) -> None:
+    def __init__(self, hyper_params: FourierHyperparameters = FourierHyperparameters(), season_length: int = 12) -> None:
         self.hyper_params = hyper_params
+        self.season_length = season_length
 
     @property
     def extra_dims(self) -> dict[str, Any]:
@@ -141,7 +142,7 @@ class FourierParametrization:
         months = pmd.as_xtensor(np.arange(n_months), dims=('epi_offset',))
         harmonics = pmd.as_xtensor(np.arange(self.hyper_params.n_harmonics + 1), dims=('harmonic',))
         phi = pmd.Normal('phi', 0, sigma=np.pi, dims=('location', 'harmonic'))
-        freq = 2 * np.pi * harmonics / 12  # Shape: (harmonic,)
+        freq = 2 * np.pi * harmonics / self.season_length  # Use season_length instead of hardcoded 12
         months_phi = freq * months + phi  # (location, harmonic, epi_offset) due to broadcasting
         harmonics_term = A * px.math.cos(months_phi)  # (location, epi_year, harmonic, epi_offset)
         mu = pmd.Deterministic('mu', harmonics_term.sum(dim='harmonic'), dims=('location', 'epi_year', 'epi_offset'))

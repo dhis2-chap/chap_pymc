@@ -5,15 +5,7 @@ import xarray
 
 from chap_pymc.transformations.seasonal_xarray import SeasonalXArray, SeasonInformation
 
-
-@pytest.fixture
-def weekly_data() -> pd.DataFrame:
-    """Create weekly time series data for testing.
-
-    Returns DataFrame with columns: location, time_period, disease_cases
-    """
-    # TODO: Implement fixture with synthetic weekly data (52 weeks per year)
-    raise NotImplementedError("Fixture needs implementation")
+# Note: weekly_data fixture is now in conftest.py
 
 
 # class TestSeasonalXArrayInit:
@@ -226,3 +218,54 @@ def test_seasonal_xarray_properties(simple_monthly_data: pd.DataFrame, split_sea
 #     """Test season_length for different frequencies using parametrization."""
 #     # TODO: Implement parametrized test for multiple frequencies
 #     raise NotImplementedError("Test needs implementation")
+
+
+class TestWeeklyData:
+    """Test SeasonalXArray with weekly frequency data."""
+
+    def test_weekly_season_length(self, weekly_data: pd.DataFrame) -> None:
+        """Test that season_length is 52 for weekly data."""
+        params = SeasonalXArray.Params(frequency='W')
+        transformer = SeasonalXArray(params)
+        assert transformer.season_length == 52
+
+    def test_weekly_freq_name(self, weekly_data: pd.DataFrame) -> None:
+        """Test that freq_name is 'week' for weekly data."""
+        params = SeasonalXArray.Params(frequency='W')
+        transformer = SeasonalXArray(params)
+        assert transformer.freq_name == 'week'
+
+    def test_weekly_transformation_shape(self, weekly_data: pd.DataFrame) -> None:
+        """Test that weekly data transforms to correct shape."""
+        params = SeasonalXArray.Params(frequency='W')
+        transformer = SeasonalXArray(params)
+        dataset, mapping = transformer.get_dataset(weekly_data)
+
+        # Check shape: should have 52 weeks in the epi_offset dimension
+        assert dataset['disease_cases'].shape[-1] == 52
+        # Check that we have 2 locations
+        assert dataset['disease_cases'].shape[0] == 2
+
+    def test_weekly_properties(self, weekly_data: pd.DataFrame) -> None:
+        """Test properties of weekly SeasonalXArray transformation."""
+        params = SeasonalXArray.Params(frequency='W', split_season_index=0)
+        transformer = SeasonalXArray(params)
+        dataset, mapping = transformer.get_dataset(weekly_data)
+
+        # Check number of non-null elements
+        properties = Properties(params)
+        properties.number_of_nonnull_elements(weekly_data, dataset)
+        properties.shape(weekly_data, dataset)
+        properties.last_value(weekly_data, dataset)
+
+    @pytest.mark.parametrize("split_season_index", [0, 13, 26, 39])
+    def test_weekly_with_different_splits(self, weekly_data: pd.DataFrame, split_season_index: int) -> None:
+        """Test weekly data with different season start weeks."""
+        params = SeasonalXArray.Params(frequency='W', split_season_index=split_season_index)
+        transformer = SeasonalXArray(params)
+        dataset, mapping = transformer.get_dataset(weekly_data)
+
+        # Verify properties hold regardless of split
+        properties = Properties(params)
+        properties.number_of_nonnull_elements(weekly_data, dataset)
+        properties.shape(weekly_data, dataset)
