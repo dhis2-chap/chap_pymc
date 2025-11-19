@@ -22,7 +22,7 @@ class WeekInfo(SeasonInformation):
     def __init__(self):
         ...
 
-    season_length: int = 52
+    season_length: int = 53
     name: str = "week"
 
 class MonthInfo(SeasonInformation):
