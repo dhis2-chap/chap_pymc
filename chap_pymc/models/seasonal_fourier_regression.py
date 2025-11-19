@@ -103,17 +103,19 @@ class SeasonalFourierRegressionV2:
 
     def get_predictions_df(self, future_data: DataFrame, mappings: tuple[dict[str, TimeCoords], NormalizationParams], samples: DataArray) -> DataFrame:
         mapping, n_params = mappings
-        samples = samples*n_params.std+n_params.mean
+        samples_xr = samples*n_params.std+n_params.mean
         n_samples = self._params.inference_params.n_samples
-        indices = np.random.choice(samples.sizes['samples'], replace=True, size=n_samples)
-        samples = np.maximum(0, np.expm1(samples.isel(samples=indices)))
+        indices = np.random.choice(samples_xr.sizes['samples'], replace=True, size=n_samples)
+        samples_np: np.ndarray[Any, Any] = np.maximum(0, np.expm1(samples_xr.isel(samples=indices)))
         colnames = ['location', 'time_period'] + [f'sample_{i}' for i in range(n_samples)]
         rows = []
+        # Convert back to xarray for selection
+        samples_final = xarray.DataArray(samples_np, coords=samples_xr.isel(samples=indices).coords, dims=samples_xr.dims)
         for row in future_data.itertuples():
             location = row.location
             time_period = row.time_period
             array_coords = mapping[str(time_period)]
-            sample_values = samples.sel(location=location, **array_coords.model_dump()).values
+            sample_values = samples_final.sel(location=location, **array_coords.model_dump()).values
             new_row = [location, time_period] + sample_values.tolist()
             rows.append(new_row)
         prediction_df = pd.DataFrame(rows, columns=colnames)
@@ -245,6 +247,7 @@ class SeasonalFourierRegression:
         # posterior = idata.posterior
         posterior = posterior_predictive
         predictions_xr = fourier_model.extract_predictions(posterior, model_input)
+        assert model_input.y_std is not None and model_input.y_mean is not None
         predictions_xr = predictions_xr*model_input.y_std +model_input.y_mean
         # Select only the first prediction_length months
         predictions_xr = predictions_xr.isel(epi_offset=slice(0, self._prediction_length))

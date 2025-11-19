@@ -99,7 +99,7 @@ class FourierInputCreator:
             raise ValueError("seasonal_data has not been set yet.")
         return self._seasonal_data
 
-    def v2(self, training_data: pd.DataFrame, future_data: pd.DataFrame) -> tuple[Dataset, dict[str, TimeCoords]]:
+    def v2(self, training_data: pd.DataFrame, future_data: pd.DataFrame) -> tuple[Dataset, tuple[dict[str, TimeCoords], NormalizationParams]]:
         """Backward compatibility method for previous interface."""
         future_data['disease_cases'] = np.nan
         data_frame = pd.concat([training_data, future_data], ignore_index=True)

@@ -111,7 +111,7 @@ class FourierParametrization:
                        observed=prev_year_y.values,
                        dims=('location', 'epi_year'))
 
-    def _get_flat_obs_model(self, mu: XTensorVariable, sigma: pm.HalfNormal, y: xarray.DataArray):
+    def _get_flat_obs_model(self, mu: XTensorVariable, sigma: pm.HalfNormal, y: xarray.DataArray) -> None:
         missing_mask = y.isnull()
         mv = missing_mask.values
         flat_mu = mu.values[~mv]

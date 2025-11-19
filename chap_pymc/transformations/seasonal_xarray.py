@@ -99,7 +99,7 @@ class SeasonalXArray:
 
     @property
     def season_length(self) -> int:
-        return self._season_info.season_length
+        return int(self._season_info.season_length)
 
     def _find_min_month(self, data_frame: pd.DataFrame) -> int:
         means: list[tuple[int, float]] = [(month, group[self._params.target_variable].mean()) for month, group in data_frame.groupby(self.freq_name)]
