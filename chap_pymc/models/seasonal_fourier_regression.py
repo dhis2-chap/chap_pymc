@@ -90,8 +90,6 @@ class SeasonalFourierRegressionV2:
             output_file = TARGET_DIR / f'{country}_regression_fit_{first_future_period}.png'
             logger.info(output_file)
             plot_vietnam_faceted_predictions(ds.y, median, q_low, q_high, ds.coords, output_file=output_file)
-        else:
-            raise Exception()
 
         prediction_df = self.get_predictions_df(future_data, mapping, samples)
         return prediction_df

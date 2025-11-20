@@ -181,3 +181,62 @@ def test_seasonal_fourier_regression_v2_basic(simple_monthly_data, simple_future
 
     print(f"\nV2 Predictions shape: {result.shape}")
     print(f"Columns: {result.columns.tolist()}")
+
+
+def test_seasonal_fourier_regression_v2_weekly(weekly_data):
+    """Test SeasonalFourierRegressionV2 with weekly frequency data."""
+    from chap_pymc.transformations.seasonal_xarray import SeasonalXArray
+    from datetime import datetime, timedelta
+
+    # Create future weekly data (3 weeks after training data ends)
+    last_time_period = weekly_data['time_period'].max()
+    last_end_date = pd.to_datetime(last_time_period.split('/')[1])
+
+    locations = weekly_data['location'].unique()
+    future_rows = []
+    for location in locations:
+        for week_offset in range(1, 4):  # 3 future weeks
+            week_start = last_end_date + timedelta(days=1 + (week_offset - 1) * 7)
+            week_end = week_start + timedelta(days=6)
+            time_period = f'{week_start.strftime("%Y-%m-%d")}/{week_end.strftime("%Y-%m-%d")}'
+            future_rows.append({
+                'location': location,
+                'time_period': time_period,
+                'mean_temperature': 20.0  # dummy value
+            })
+    future_data = pd.DataFrame(future_rows)
+
+    # Create V2 model with weekly frequency and debug inference params
+    input_params = FourierInputCreator.Params(
+        seasonal_params=SeasonalXArray.Params(frequency='W')
+    )
+
+    model = SeasonalFourierRegressionV2(
+        params=SeasonalFourierRegressionV2.Params(
+            inference_params=InferenceParams.debug(),
+            fourier_hyperparameters=FourierHyperparameters(n_harmonics=2),
+            input_params=input_params
+        )
+    )
+
+    # Run prediction
+    result = model.predict(weekly_data, future_data, save_plot=False)
+
+    # Verify output
+    assert isinstance(result, pd.DataFrame)
+    assert 'location' in result.columns
+    assert 'time_period' in result.columns
+
+    # Check we have predictions for all locations and future periods
+    n_locations = len(locations)
+    n_future_weeks = 3
+    assert len(result) == n_locations * n_future_weeks
+
+    # Check predictions are positive
+    sample_cols = [c for c in result.columns if c.startswith('sample_')]
+    assert len(sample_cols) > 0, "No sample columns found"
+    assert (result[sample_cols] >= 0).all().all()
+
+    print(f"\nWeekly V2 Predictions shape: {result.shape}")
+    print(f"Locations: {result['location'].unique()}")
+    print(f"Time periods: {result['time_period'].unique()}")

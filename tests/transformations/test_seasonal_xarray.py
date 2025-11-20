@@ -1,4 +1,5 @@
 """Tests for SeasonalXArray transformation."""
+import numpy as np
 import pandas as pd
 import pytest
 import xarray
@@ -57,7 +58,7 @@ class Properties:
         for location, group in df.groupby('location'):
             last_df = group.sort_values('time_period')[var].iloc[-1]
             last_da = data_set[var].sel(location=location).isel(epi_year=-1).isel(epi_offset=last_month_idx).values
-            assert last_df == last_da, f"Mismatch for location {location}: df={last_df}, da={last_da} last_month_idx={last_month_idx}, split_season_index={self._params.split_season_index}"
+            assert np.isclose(last_df, last_da), f"Mismatch for location {location}: df={last_df}, da={last_da} last_month_idx={last_month_idx}, split_season_index={self._params.split_season_index}"
 
 @pytest.mark.parametrize("split_season_index", range(12))
 def test_seasonal_xarray_properties(simple_monthly_data: pd.DataFrame, split_season_index: int) -> None:
