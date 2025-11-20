@@ -28,3 +28,20 @@ DONT access private variables in tests (e.g. _variable), use public API only
 * features are isolated pieces of work that takes typically much less time (pieces of an epic).
 * always suggest an update to jira after pushing to master
 * Be succinct and not verbose when creating/updating jira work items/epics/
+
+## Project Context
+
+**Project**: Climate (CLIM)
+**Organization**: DHIS2
+**Main Epic**: CLIM-140 - chap_pymc model
+- Goal: Publish a monthly version of the curve parametrization based pymc model
+
+### Active Tasks
+
+**CLIM-141**: Implement proper NormalMixture model for seasonal patterns
+- Replace current hacky weighted average with PyMC's NormalMixture
+- Two components: (1) Empty season baseline, (2) Normal seasonal Fourier signal
+- Each observation comes from ONE component (not weighted average)
+- Proper statistical mixture model for climate-driven disease dynamics
+- Related code: `fourier_parametrization.py:38-54` (_mixture_weights method)
+- Status: To be implemented

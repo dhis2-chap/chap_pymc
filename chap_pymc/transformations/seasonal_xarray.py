@@ -3,6 +3,95 @@ import pydantic
 import xarray
 
 
+def week_to_period_weights(week: int) -> list[tuple[int, float]]:
+    """Map an ISO week (1-53) to normalized periods (0-51) with weights.
+
+    Splits the year into 52 equal periods and calculates overlap weights.
+    Each period represents 365.25/52 ≈ 7.0288 days.
+
+    Args:
+        week: ISO week number (1-53)
+
+    Returns:
+        List of (period_index, weight) tuples where weights sum to 1.0
+    """
+    days_per_period = 365.25 / 52
+
+    # Week spans days [(week-1)*7, week*7) in 0-indexed days
+    week_start_day = float((week - 1) * 7)
+    week_end_day = float(week * 7)
+
+    # Handle week 53: cap at 365.25 days
+    week_end_day = min(week_end_day, 365.25)
+    week_length = week_end_day - week_start_day
+
+    if week_length <= 0:
+        return [(51, 1.0)]  # Edge case: return last period
+
+    weights: list[tuple[int, float]] = []
+
+    for period in range(52):
+        period_start = period * days_per_period
+        period_end = (period + 1) * days_per_period
+
+        # Calculate overlap between week and period
+        overlap_start = max(week_start_day, period_start)
+        overlap_end = min(week_end_day, period_end)
+        overlap = max(0, overlap_end - overlap_start)
+
+        if overlap > 0:
+            weight = overlap / week_length
+            weights.append((period, weight))
+
+    return weights
+
+
+def normalize_weekly_data(df: pd.DataFrame, value_columns: list[str]) -> pd.DataFrame:
+    """Normalize weekly data to 52 equal periods using weighted distribution.
+
+    Args:
+        df: DataFrame with 'location', 'year', 'week' (0-indexed), 'time_period', and value columns
+        value_columns: Names of columns containing values to distribute
+
+    Returns:
+        DataFrame with 'week' replaced by normalized period (0-51), values are weighted averages
+    """
+    rows = []
+
+    for _, row in df.iterrows():
+        week_1indexed = int(row['week']) + 1
+        weights = week_to_period_weights(week_1indexed)
+
+        for period, weight in weights:
+            new_row = {
+                'location': row['location'],
+                'year': row['year'],
+                'week': period,
+                'time_period': row['time_period'],
+                '_weight': weight
+            }
+            for col in value_columns:
+                new_row[col] = row[col] * weight
+            rows.append(new_row)
+
+    result = pd.DataFrame(rows)
+
+    # Aggregate by location, year, period - take first time_period for the mapping
+    agg_dict: dict[str, str] = dict.fromkeys(value_columns, 'sum')
+    agg_dict['_weight'] = 'sum'
+    agg_dict['time_period'] = 'first'  # Keep one time_period for coord mapping
+
+    aggregated = result.groupby(['location', 'year', 'week']).agg(agg_dict).reset_index()
+
+    # Convert weighted sums back to weighted averages
+    for col in value_columns:
+        aggregated[col] = aggregated[col] / aggregated['_weight']
+
+    aggregated = aggregated.drop(columns=['_weight'])
+
+    return aggregated
+
+
 
 
 class SeasonInformation:
@@ -22,7 +111,7 @@ class WeekInfo(SeasonInformation):
     def __init__(self):
         ...
 
-    season_length: int = 53
+    season_length: int = 52
     name: str = "week"
 
 class MonthInfo(SeasonInformation):
@@ -83,6 +172,14 @@ class SeasonalXArray:
         periods = data_frame['time_period'].apply(parse_period)
         data_frame['year'] = periods.apply(lambda x: x[0])
         data_frame[self.freq_name] = periods.apply(lambda x: x[1] - 1)  # 0-indexed
+
+        # Normalize weekly data to 52 equal periods
+        if self._params.frequency == 'W':
+            # Get value columns (numeric columns excluding year, week)
+            value_columns = [col for col in data_frame.columns
+                           if col not in ['location', 'year', 'week', 'time_period']
+                           and pd.api.types.is_numeric_dtype(data_frame[col])]
+            data_frame = normalize_weekly_data(data_frame, value_columns)
 
         self._min_month = self._find_min_month(data_frame) if self._params.split_season_index is None else self._params.split_season_index
         data_frame['epi_offset'] = (data_frame[self.freq_name] - self._min_month) % self.season_length

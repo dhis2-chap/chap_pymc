@@ -1,6 +1,6 @@
 # Jira CLI Commands Reference
 
-Use the Atlassian CLI (acli) to interact with Jira. This project's main epic is **CLIM-140** (chap_pymc model).
+Use the Atlassian CLI (acli) to interact with Jira.
 
 ## Authentication
 
@@ -35,9 +35,9 @@ My assigned issues:
 acli jira workitem search --jql "assignee = currentUser() ORDER BY updated DESC" --limit 10
 ```
 
-Issues in Climate project:
+Issues in a specific project:
 ```bash
-acli jira workitem search --jql "project = CLIM ORDER BY updated DESC" --limit 10
+acli jira workitem search --jql "project = PROJECT_KEY ORDER BY updated DESC" --limit 10
 ```
 
 ### View Issue Details
@@ -48,13 +48,13 @@ acli jira workitem view ISSUE-KEY
 
 Example:
 ```bash
-acli jira workitem view CLIM-140
+acli jira workitem view PROJECT-123
 ```
 
 ### Create Work Item
 
 ```bash
-acli jira workitem create --project CLIM --type Task --summary "Summary text" --description "Detailed description"
+acli jira workitem create --project PROJECT_KEY --type Task --summary "Summary text" --description "Detailed description"
 ```
 
 Available types: Task, Story, Bug, Epic, etc.
@@ -69,7 +69,7 @@ Common statuses: "To Do", "In Progress", "Done"
 
 Example:
 ```bash
-acli jira workitem transition --key CLIM-146 --status "Done" --yes
+acli jira workitem transition --key PROJECT-123 --status "Done" --yes
 ```
 
 ## Comments
@@ -88,9 +88,9 @@ acli jira workitem comment list --key "ISSUE-KEY" --limit 5
 
 - **Assigned to me**: `assignee = currentUser()`
 - **Recent updates**: `ORDER BY updated DESC`
-- **Specific project**: `project = PROJECTKEY`
+- **Specific project**: `project = PROJECT_KEY`
 - **Status filter**: `status = "In Progress"`
-- **Multiple conditions**: `project = CLIM AND assignee = currentUser() AND status != Done`
+- **Multiple conditions**: `project = PROJECT_KEY AND assignee = currentUser() AND status != Done`
 
 ## Common Workflows
 
@@ -101,12 +101,12 @@ acli jira workitem search --jql "assignee = currentUser() ORDER BY updated DESC"
 
 ### Update issue with progress
 ```bash
-acli jira workitem comment create --key "CLIM-140" --body "Progress update: [your update here]"
+acli jira workitem comment create --key "PROJECT-123" --body "Progress update: [your update here]"
 ```
 
 ### View project issues
 ```bash
-acli jira workitem search --jql "project = CLIM ORDER BY created DESC" --limit 20
+acli jira workitem search --jql "project = PROJECT_KEY ORDER BY created DESC" --limit 20
 ```
 
 ## Getting Help
@@ -115,23 +115,6 @@ acli jira workitem search --jql "project = CLIM ORDER BY created DESC" --limit 2
 - Jira commands: `acli jira --help`
 - Workitem commands: `acli jira workitem --help`
 - Specific command help: `acli jira workitem search --help`
-
-## Project Context
-
-**Main Epic**: CLIM-140 - chap_pymc model
-- Goal: Publish a monthly version of the curve parametrization based pymc model
-- Project: Climate (CLIM)
-- Organization: DHIS2
-
-### Active Tasks
-
-**CLIM-141**: Implement proper NormalMixture model for seasonal patterns
-- Replace current hacky weighted average with PyMC's NormalMixture
-- Two components: (1) Empty season baseline, (2) Normal seasonal Fourier signal
-- Each observation comes from ONE component (not weighted average)
-- Proper statistical mixture model for climate-driven disease dynamics
-- Related code: `fourier_parametrization.py:38-54` (_mixture_weights method)
-- Status: To be implemented
 
 ## Additional Resources
 
