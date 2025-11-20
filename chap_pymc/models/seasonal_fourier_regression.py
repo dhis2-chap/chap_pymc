@@ -84,10 +84,13 @@ class SeasonalFourierRegressionV2:
         # Automatically plot predictions if requested and model has a name
         if save_plot and self._name is not None:
             first_future_period = str(future_data['time_period'].min())
+            # Replace / with _ for valid filename
+            safe_period = first_future_period.replace('/', '_')
             median = samples.median(dim='samples')
             q_low = samples.quantile(0.1, dim='samples')
             q_high = samples.quantile(0.9, dim='samples')
-            output_file = TARGET_DIR / f'{country}_regression_fit_{first_future_period}.png'
+            TARGET_DIR.mkdir(parents=True, exist_ok=True)
+            output_file = TARGET_DIR / f'{country}_regression_fit_{safe_period}.png'
             logger.info(output_file)
             plot_vietnam_faceted_predictions(ds.y, median, q_low, q_high, ds.coords, output_file=output_file)
 

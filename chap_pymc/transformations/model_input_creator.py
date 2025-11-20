@@ -140,7 +140,16 @@ class FourierInputCreator:
         assert not n_params.mean.isnull().any(), n_params.mean
         y = (y-y_mean)/y_std
 
-        first_month = int(str(future_data['time_period'].min()).split('-')[1])-1
+        # Calculate first period index based on data format
+        first_period_str = str(future_data['time_period'].min())
+        if '/' in first_period_str:
+            # Weekly date range format: "2024-09-23/2024-09-29"
+            start_date = pd.to_datetime(first_period_str.split('/')[0])
+            day_of_year = start_date.timetuple().tm_yday
+            first_month = (day_of_year - 1) // 7  # 0-indexed week
+        else:
+            # Monthly format: "2024-09"
+            first_month = int(first_period_str.split('-')[1]) - 1
         #last_month = (first_month - 1) % 12
         last_month  = y.sizes['epi_offset']-y.isel(epi_year=-2).isnull().all(dim='location').values[::-1].argmin()-1
         # Get last_month value from each year for each location
@@ -166,13 +175,46 @@ class FourierInputCreator:
     def X_v2(self, training_data: pd.DataFrame, first_month: int) -> xarray.DataArray:
         params = self._params.seasonal_params.copy()
         params.split_season_index = first_month
-        X = SeasonalXArray(params).get_dataset(training_data)[0]['mean_temperature']
+        ds_result = SeasonalXArray(params).get_dataset(training_data)[0]
+        X = ds_result['mean_temperature']
+
+        # Debug: check for NaNs after SeasonalXArray
+        nan_count = int(X.isnull().sum().values)
+        if nan_count > 0:
+            print(f"X_v2 after SeasonalXArray: {nan_count} NaNs, shape={X.shape}")
+            # Show which years have NaNs
+            for year in X.epi_year.values:
+                year_nans = int(X.sel(epi_year=year).isnull().sum().values)
+                if year_nans > 0:
+                    print(f"  epi_year {year}: {year_nans} NaNs")
+
         X = X.isel(epi_offset=slice(-self._lag, None))
         X = X.rename({'epi_offset': 'feature'})
+
+        # Debug: check after slicing
+        nan_count = int(X.isnull().sum().values)
+        if nan_count > 0:
+            print(f"X_v2 after slice to lag={self._lag}: {nan_count} NaNs, shape={X.shape}")
+
         X = (X - X.mean(dim=('epi_year','feature'))) / X.std(dim=('epi_year','feature'))
+
+        # Debug: check after normalization
+        nan_count = int(X.isnull().sum().values)
+        if nan_count > 0:
+            print(f"X_v2 after normalization: {nan_count} NaNs, shape={X.shape}")
+
         # Remove first year if missing predictors
+        first_year_nans = int(X.isel(epi_year=0).isnull().sum().values)
+        print(f"X_v2: first year (index 0, coord {X.epi_year.values[0]}) has {first_year_nans} NaNs")
         if X.isel(epi_year=0).isnull().any():
+            print(f"X_v2: removing first year due to NaNs")
             X = X.isel(epi_year=slice(1, None))
+
+        # Debug: final check
+        nan_count = int(X.isnull().sum().values)
+        if nan_count > 0:
+            print(f"X_v2 final: {nan_count} NaNs, shape={X.shape}")
+
         return X
 
     def create_model_input(self, training_data: pd.DataFrame) -> FourierModelInput:

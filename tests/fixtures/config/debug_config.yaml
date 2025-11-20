@@ -1,0 +1,8 @@
+user_options:
+  draws: 10
+  tune: 10
+  chains: 2
+  target_accept: 0.8
+  n_iterations: 10
+  skip_bottom_n_seasons: 2
+  use_ar: true

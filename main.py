@@ -11,8 +11,36 @@ from chap_pymc.curve_parametrizations.fourier_parametrization import (
     FourierHyperparameters,
 )
 from chap_pymc.inference_params import InferenceParams
-from chap_pymc.models.seasonal_fourier_regression import SeasonalFourierRegression, SeasonalFourierRegressionV2
+from chap_pymc.models.seasonal_fourier_regression import (
+    SeasonalFourierRegressionV2,
+)
 from chap_pymc.transformations.model_input_creator import FourierInputCreator
+from chap_pymc.transformations.seasonal_xarray import SeasonalXArray
+
+
+def detect_frequency(df: pd.DataFrame) -> str:
+    """Detect data frequency from time_period format.
+
+    Returns 'W' for weekly data, 'M' for monthly data.
+    """
+    sample_period = str(df['time_period'].iloc[0])
+
+    # Date range format indicates weekly data
+    if '/' in sample_period:
+        return 'W'
+
+    # ISO week format (e.g., "2024-W15")
+    if 'w' in sample_period.lower():
+        return 'W'
+
+    # Check if period number > 12 (must be weekly)
+    parts = sample_period.split('-')
+    if len(parts) == 2:
+        period = int(parts[1])
+        if period > 12:
+            return 'W'
+
+    return 'M'
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -56,15 +84,28 @@ def predict(model: str,
         model_config = ChapConfig.model_validate(data).user_options
     training_df = pd.read_csv(historic_data)
     future_df = pd.read_csv(future_data)
+
+    # Detect data frequency and set in params
+    frequency = detect_frequency(training_df)
+    logger.info(f"Detected data frequency: {frequency}")
+
     inference_params = InferenceParams(**model_config.model_dump())
     fourier_hyperparameters = FourierHyperparameters(**model_config.model_dump())
-    input_params = FourierInputCreator.Params(**model_config.model_dump())
+
+    # Create input params with detected frequency
+    #seasonal_params = SeasonalXArray.Params(frequency=frequency)
+    input_params = FourierInputCreator.Params(
+        **model_config.model_dump(),
+        #seasonal_params=seasonal_params
+    )
+    input_params.seasonal_params.frequency = frequency
     assert input_params.skip_bottom_n_seasons == 2, data
     params=SeasonalFourierRegressionV2.Params(inference_params=inference_params,
                                               fourier_hyperparameters=fourier_hyperparameters,
                                               input_params=input_params)
     name = Path(historic_data).stem
     regression_model = SeasonalFourierRegressionV2(params, name=name)
+    # Note: save_plot will be skipped if name contains invalid path characters
     # model = SeasonalFourierRegression(
     #     prediction_length=3,
     #     lag=3,

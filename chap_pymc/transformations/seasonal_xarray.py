@@ -56,6 +56,12 @@ def normalize_weekly_data(df: pd.DataFrame, value_columns: list[str]) -> pd.Data
     Returns:
         DataFrame with 'week' replaced by normalized period (0-51), values are weighted averages
     """
+    # Check input for NaNs
+    for col in value_columns:
+        nan_count = df[col].isna().sum()
+        if nan_count > 0:
+            print(f"normalize_weekly_data input: {nan_count} NaNs in {col}")
+
     rows = []
 
     for _, row in df.iterrows():
@@ -88,6 +94,12 @@ def normalize_weekly_data(df: pd.DataFrame, value_columns: list[str]) -> pd.Data
         aggregated[col] = aggregated[col] / aggregated['_weight']
 
     aggregated = aggregated.drop(columns=['_weight'])
+
+    # Check output for NaNs
+    for col in value_columns:
+        nan_count = aggregated[col].isna().sum()
+        if nan_count > 0:
+            print(f"normalize_weekly_data output: {nan_count} NaNs in {col}")
 
     return aggregated
 
