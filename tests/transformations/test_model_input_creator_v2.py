@@ -1,12 +1,8 @@
 """Minimal test skeleton for FourierInputCreator v2."""
-import pandas as pd
 import pytest
 import xarray
 
-from chap_pymc.transformations.model_input_creator import (
-    FourierInputCreator,
-    FourierModelInput,
-)
+from chap_pymc.transformations.model_input_creator import FourierInputCreator
 from chap_pymc.transformations.seasonal_xarray import SeasonalXArray
 
 
@@ -15,8 +11,8 @@ class TestFourierInputCreatorV2:
 
     def test_v2_basic_workflow(self, simple_monthly_data, simple_future_data):
         """Test basic v2 workflow with training and future data."""
-        params = FourierInputCreator.Params(lag=3, seasonal_params=SeasonalXArray.Params(split_season_index=6))
-        #dataset = SeasonalXArray(params).get_dataset(simple_monthly_data)
+        # Note: split_season_index must be None - v2() calculates it from future_data
+        params = FourierInputCreator.Params(lag=3, seasonal_params=SeasonalXArray.Params())
         ds, mapping = FourierInputCreator(params=params).v2(simple_monthly_data, simple_future_data)
         assert isinstance(ds, xarray.Dataset)
         assert ds.X.shape[-1] == 3

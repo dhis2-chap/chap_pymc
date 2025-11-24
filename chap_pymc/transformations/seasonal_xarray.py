@@ -56,6 +56,8 @@ def normalize_weekly_data(df: pd.DataFrame, value_columns: list[str]) -> pd.Data
     Returns:
         DataFrame with 'week' replaced by normalized period (0-51), values are weighted averages
     """
+    import numpy as np
+
     # Check input for NaNs
     for col in value_columns:
         nan_count = df[col].isna().sum()
@@ -74,26 +76,39 @@ def normalize_weekly_data(df: pd.DataFrame, value_columns: list[str]) -> pd.Data
                 'year': row['year'],
                 'week': period,
                 'time_period': row['time_period'],
-                '_weight': weight
             }
+            # Track weights separately for each column, excluding NaN values
             for col in value_columns:
-                new_row[col] = row[col] * weight
+                val = row[col]
+                if pd.isna(val):
+                    new_row[col] = 0.0
+                    new_row[f'_weight_{col}'] = 0.0
+                else:
+                    new_row[col] = val * weight
+                    new_row[f'_weight_{col}'] = weight
             rows.append(new_row)
 
     result = pd.DataFrame(rows)
 
     # Aggregate by location, year, period - take first time_period for the mapping
-    agg_dict: dict[str, str] = dict.fromkeys(value_columns, 'sum')
-    agg_dict['_weight'] = 'sum'
+    agg_dict: dict[str, str] = {}
+    for col in value_columns:
+        agg_dict[col] = 'sum'
+        agg_dict[f'_weight_{col}'] = 'sum'
     agg_dict['time_period'] = 'first'  # Keep one time_period for coord mapping
 
     aggregated = result.groupby(['location', 'year', 'week']).agg(agg_dict).reset_index()
 
     # Convert weighted sums back to weighted averages
+    # If total weight is 0, result is NaN (all inputs were NaN)
     for col in value_columns:
-        aggregated[col] = aggregated[col] / aggregated['_weight']
-
-    aggregated = aggregated.drop(columns=['_weight'])
+        weight_col = f'_weight_{col}'
+        aggregated[col] = np.where(
+            aggregated[weight_col] > 0,
+            aggregated[col] / aggregated[weight_col],
+            np.nan
+        )
+        aggregated = aggregated.drop(columns=[weight_col])
 
     # Check output for NaNs
     for col in value_columns:

@@ -15,7 +15,6 @@ from chap_pymc.models.seasonal_fourier_regression import (
     SeasonalFourierRegressionV2,
 )
 from chap_pymc.transformations.model_input_creator import FourierInputCreator
-from chap_pymc.transformations.seasonal_xarray import SeasonalXArray
 
 
 def detect_frequency(df: pd.DataFrame) -> str:
@@ -80,7 +79,6 @@ def predict(model: str,
             data = yaml.load(content, Loader=yaml.FullLoader)
         if 'user_options' not in data:
             data['user_options']  = {}
-        data['user_options'] |= {'skip_bottom_n_seasons': 0, 'use_ar': True}
         model_config = ChapConfig.model_validate(data).user_options
     training_df = pd.read_csv(historic_data)
     future_df = pd.read_csv(future_data)
@@ -99,7 +97,6 @@ def predict(model: str,
         #seasonal_params=seasonal_params
     )
     input_params.seasonal_params.frequency = frequency
-    assert input_params.skip_bottom_n_seasons == 2, data
     params=SeasonalFourierRegressionV2.Params(inference_params=inference_params,
                                               fourier_hyperparameters=fourier_hyperparameters,
                                               input_params=input_params)
