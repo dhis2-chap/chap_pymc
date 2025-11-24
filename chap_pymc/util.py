@@ -29,11 +29,6 @@ def to_tensor_panels(pnl, time_idx, locs, date_col, loc_col, col):
         M[:, j] = pivot[loc].to_numpy()
     return M
 
-def _safe_impute(M):
-    df = pd.DataFrame(M)
-    df = df.interpolate(limit_direction="both").ffill().bfill()
-    return df.to_numpy()
-
 def extract_month_indices(time_idx):
     """Extract month indices (0-11) from time index for seasonal effects."""
     months = pd.to_datetime(time_idx).month - 1  # Convert to 0-11

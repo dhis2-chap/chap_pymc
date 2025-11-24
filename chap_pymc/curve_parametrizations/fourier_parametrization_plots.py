@@ -97,8 +97,15 @@ def plot_vietnam_faceted_predictions(
     n_locations = len(locations)
     n_years = len(years)
 
+    # Detect if weekly or monthly based on number of periods
+    season_length = len(y.epi_offset.values)
+    is_weekly = season_length > 12
+    period_label = 'Week' if is_weekly else 'Month'
+
+    # Adjust figure width for weekly data (more periods to show)
+    width_multiplier = 6 if is_weekly else 4
     fig, axes = plt.subplots(n_years, n_locations,
-                            figsize=(4 * n_locations, 2.5 * n_years),
+                            figsize=(width_multiplier * n_locations, 2.5 * n_years),
                             sharey=True)
 
     # Handle single location or single year case
@@ -141,7 +148,7 @@ def plot_vietnam_faceted_predictions(
 
             # Set xlabel for bottom row
             if year_idx == n_years - 1:
-                ax.set_xlabel('Month', fontsize=8)
+                ax.set_xlabel(period_label, fontsize=8)
 
             ax.grid(True, alpha=0.3)
             ax.tick_params(labelsize=7)

@@ -86,6 +86,33 @@ def nepal_full_year() -> Generator[tuple[Any, Any], Any, None]:
     data_path = Path('/Users/knutdr/Sources/chap_benchmarking/csv_datasets')
     return get_full_year('nepal_evaluation_set', data_path)
 
+def get_weekly_full_year() -> Generator[tuple[Any, Any], Any, None]:
+    """Generate rolling test instances from weekly data."""
+    fixtures_path = Path(__file__).parent / 'fixtures' / 'data'
+    training_file = fixtures_path / 'weekly_trainig_data.py'
+
+    dataset = chap_core.data.DataSet.from_csv(training_file)
+
+    # 12 weeks prediction, generate enough test sets
+    train_data, test_instances = train_test_generator(
+        dataset, prediction_length=12, n_test_sets=20
+    )
+
+    i = 0
+    for historic_data, _, future_data in test_instances:
+        df = historic_data.to_pandas()
+        f = future_data.to_pandas()
+        f.time_period = f.time_period.astype(str)
+        df.time_period = df.time_period.astype(str)
+        logger.info(f'Yielding weekly test instance {i}')
+        i += 1
+        yield df, f
+
+@pytest.fixture
+def weekly_full_year() -> Generator[tuple[Any, Any], Any, None]:
+    """Fixture that returns generator for rolling weekly test instances."""
+    return get_weekly_full_year()
+
 @pytest.fixture
 def viet_first_instance(viet_full_year)->tuple[DataSet, DataSet]:
     return next(viet_full_year)
@@ -131,7 +158,7 @@ def simple_future_data(simple_coords) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 @pytest.fixture
-def weekly_data() -> pd.DataFrame:
+def _weekly_data() -> pd.DataFrame:
     """Create weekly time series data with date range format.
 
     Returns DataFrame with columns: location, time_period, disease_cases, mean_temperature

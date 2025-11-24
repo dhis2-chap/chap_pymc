@@ -63,6 +63,56 @@ def test_viet_full_year(viet_full_year, full_inference_params, skip=7, country='
 def test_nepal_full_year(nepal_full_year, full_inference_params, debug_inference_params, nepal_input_params):
     return test_viet_full_year(nepal_full_year, full_inference_params, skip=9, country='nepal', input_params=nepal_input_params)
 
+@pytest.mark.slow
+def test_weekly_full_year(weekly_full_year, full_inference_params):
+    """Test SeasonalFourierRegressionV2 with rolling weekly windows, stride 4."""
+    from chap_pymc.transformations.seasonal_xarray import SeasonalXArray
+
+    weekly_input_params = FourierInputCreator.Params(
+        seasonal_params=SeasonalXArray.Params(frequency='W'),
+        skip_bottom_n_seasons=0
+    )
+
+    # Iterate through rolling test windows with stride 4
+    for i, (training_df, future_df) in enumerate(weekly_full_year):
+        if i % 4 != 0:  # Stride 4: only run every 4th instance
+            continue
+        test_weekly_regression((training_df, future_df), full_inference_params, i, input_params=weekly_input_params)
+
+
+def test_weekly_regression(weekly_instance: tuple, inference_params, idx: int = 0, input_params=None):
+    """Test weekly regression with plotting."""
+    training_df, future_df = weekly_instance[0], weekly_instance[1]
+    logger.info(f"Weekly test {idx}: {future_df['time_period'].min()}")
+
+    model = SeasonalFourierRegressionV2(
+        SeasonalFourierRegressionV2.Params(
+            inference_params=inference_params,
+            input_params=input_params,
+            fourier_hyperparameters=FourierHyperparameters(prior_strength=0.1, n_harmonics=4)
+        ),
+        name=f'weekly_regression_{idx}'
+    )
+
+    ds, mapping = model.get_input_data(future_df, training_df)
+    samples = model.get_raw_samples(ds)
+    assert not samples.isnull().any()
+
+    median = samples.median(dim='samples')
+    q_low = samples.quantile(0.1, dim='samples')
+    q_high = samples.quantile(0.9, dim='samples')
+
+    # Safe filename for weekly time periods
+    safe_period = str(future_df['time_period'].min()).replace('/', '_')
+    plot_vietnam_faceted_predictions(
+        ds.y, median, q_low, q_high, ds.coords,
+        output_file=f'weekly_regression_fit_{idx}_{safe_period}.png'
+    )
+
+    prediction_df = model.get_predictions_df(future_df, mapping, samples)
+    assert not prediction_df['sample_1'].isnull().any(), prediction_df['sample_1'].unique()
+
+
 @pytest.fixture
 def full_inference_params():
     return InferenceParams(draws=1000,

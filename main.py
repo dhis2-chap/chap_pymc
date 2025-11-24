@@ -80,7 +80,7 @@ def predict(model: str,
             data = yaml.load(content, Loader=yaml.FullLoader)
         if 'user_options' not in data:
             data['user_options']  = {}
-        data['user_options'] |= {'skip_bottom_n_seasons': 2, 'use_ar': True}
+        data['user_options'] |= {'skip_bottom_n_seasons': 0, 'use_ar': True}
         model_config = ChapConfig.model_validate(data).user_options
     training_df = pd.read_csv(historic_data)
     future_df = pd.read_csv(future_data)

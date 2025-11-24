@@ -93,6 +93,7 @@ class FourierInputCreator:
         self._lag = lag
         self._seasonal_data: SeasonalTransform | None = None  # For backward compatibility
         self._params = params
+
     @property
     def seasonal_data(self) -> SeasonalTransform:
         if self._seasonal_data is None:
