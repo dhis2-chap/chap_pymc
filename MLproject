@@ -23,50 +23,70 @@ required_covariates:
 supported_period_type: any
 target: disease_cases
 user_options:
-  additional_covariates:
-    default:
-    - rainfall
-    - mean_temperature
-    items:
-      type: string
-    title: Additional Covariates
-    type: array
-  tune:
-    default: 100
-    title: Tune
-    type: integer
+  # Inference parameters (InferenceParams)
+  method:
+    default: hmc
+    title: Inference Method
+    type: string
+    enum: [hmc, advi]
   draws:
-    default: 100
-    title: Draws
+    default: 500
+    title: Number of Draws (HMC)
+    type: integer
+  tune:
+    default: 500
+    title: Number of Tuning Steps (HMC)
     type: integer
   chains:
     default: 4
-    title: Chains
+    title: Number of Chains (HMC)
     type: integer
-  use_seasonal_effects:
-    default: false
-    title: Use Seasonal Effects
-    type: boolean
-  seasonal_periods:
-    default: 12
-    title: Seasonal Periods
+  target_accept:
+    default: 0.95
+    title: Target Acceptance Rate (HMC)
+    type: number
+  n_iterations:
+    default: 200000
+    title: Number of Iterations (ADVI)
     type: integer
-  seasonal_sigma_base:
-    default: 1.0
-    title: Base Seasonal Effect Sigma
-    type: number
-  seasonal_sigma_loc:
-    default: 0.5
-    title: Location Seasonal Effect Sigma
-    type: number
-  use_location_effects:
+  n_samples:
+    default: 500
+    title: Number of Samples (ADVI)
+    type: integer
+  random_seed:
+    default: 42
+    title: Random Seed
+    type: integer
+  # Fourier hyperparameters (FourierHyperparameters)
+  n_harmonics:
+    default: 3
+    title: Number of Fourier Harmonics
+    type: integer
+  do_ar_effect:
     default: false
-    title: Use Location Random Effects
+    title: Use Autoregressive Effect
     type: boolean
-  location_sigma:
+  do_mixture:
+    default: false
+    title: Use Mixture Model
+    type: boolean
+  use_prev_year:
+    default: true
+    title: Use Previous Year Data
+    type: boolean
+  prior_strength:
     default: 1.0
-    title: Location Random Effect Sigma
+    title: Prior Strength (Scale Factor)
     type: number
+  # Input creator parameters (FourierInputCreator.Params)
+  lag:
+    default: 3
+    title: Number of Lag Features
+    type: integer
+  skip_bottom_n_seasons:
+    default: 0
+    title: Number of Lowest Seasons to Skip
+    type: integer
 
 entry_points:
   train:
@@ -77,12 +97,12 @@ entry_points:
       model_config: str
   predict:
     command: python main.py predict {model} {historic_data} {future_data} {out_file}
-      {model_config}
+      {model_config_file}
     parameters:
       model: str
       historic_data: str
       future_data: str
       out_file: str
-      model_config: str
+      model_config_file: str
 
 python_env: pyenv.yaml

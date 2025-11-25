@@ -119,7 +119,8 @@ class FourierInputCreator:
             season_means = y.mean(dim=('location', 'epi_offset'))
             # Find the n seasons with lowest mean (argsort returns indices)
             args = season_means.argsort().values
-            args = args[args!=0] #Don't remove first year
+            last_season_idx = len(season_means) - 1
+            args = args[(args != 0) & (args != last_season_idx)]  # Don't remove first or last year
             bottom_season_indices = args[:self._params.skip_bottom_n_seasons]
             # Get the actual epi_year coordinate values at those indices
             bottom_season_coords = season_means.epi_year.values[bottom_season_indices]
