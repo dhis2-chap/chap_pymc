@@ -16,9 +16,6 @@ from chap_pymc.curve_parametrizations.fourier_parametrization import (
     FourierHyperparameters,
     FourierParametrization,
 )
-from chap_pymc.curve_parametrizations.fourier_parametrization_plots import (
-    plot_vietnam_faceted_predictions,
-)
 from chap_pymc.inference_params import InferenceParams
 from chap_pymc.transformations.model_input_creator import (
     FourierInputCreator,
@@ -92,6 +89,10 @@ class SeasonalFourierRegressionV2:
             TARGET_DIR.mkdir(parents=True, exist_ok=True)
             output_file = TARGET_DIR / f'{country}_regression_fit_{safe_period}.png'
             logger.info(output_file)
+            from chap_pymc.curve_parametrizations.fourier_parametrization_plots import (
+                plot_vietnam_faceted_predictions,
+            )
+
             plot_vietnam_faceted_predictions(ds.y, median, q_low, q_high, ds.coords, output_file=output_file)
 
         prediction_df = self.get_predictions_df(future_data, mapping, samples)

@@ -3,11 +3,12 @@ name: hmc_model
 meta_data:
   author: Knut Rand
   author_note: >
-      HMC might take a while to converge, especially with many covariates.
+      This model is currently quite uncertain when predicting from the end of one season to the beginning of another. It can give very high max estimates for the upper quantiles.
   author_assessed_status: red
   contact_email: knutdrand@gmail.com
   description: >
-    This model is a HMC based adaption of inla models that allows for predicting without knowing future covariates.
+    This model is a HMC based adaption of inla models that allows for predicting without knowing future covariates. It does a more detailed curve fitting.
+    INLA models typically uses seasonal_effect + yearly_random_effect. While this model does the curve fitting using four fourier components
   display_name: HMC Model
   organization: HISP Centre, University of Oslo
   organization_logo_url: https://landportal.org/sites/default/files/2024-03/university_of_oslo_logo.png
