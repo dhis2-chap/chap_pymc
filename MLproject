@@ -19,7 +19,7 @@ meta_data:
 
 allow_free_additional_continuous_covariates: true
 required_covariates:
-- population
+- mean_temperature
 supported_period_type: any
 target: disease_cases
 user_options:
