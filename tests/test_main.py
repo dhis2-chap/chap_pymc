@@ -44,7 +44,7 @@ def test_predict_weekly_data():
         historic_data=historic_data,
         future_data=future_data,
         out_file=out_file,
-        model_config_file=config_file
+        model_config=config_file
     )
 
     # Verify output

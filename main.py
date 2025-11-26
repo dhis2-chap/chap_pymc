@@ -56,7 +56,7 @@ def predict(model: str,
             historic_data: str,
             future_data: str,
             out_file: str,
-            model_config_file: str | None = None,
+            model_config: str | None = None,
             ):
     """
     Generate predictions using either seasonal or Fourier regression model.
@@ -66,20 +66,20 @@ def predict(model: str,
         historic_data: Path to CSV with historical training data
         future_data: Path to CSV with future data (not used currently)
         out_file: Path to save predictions CSV
-        model_config: Optional path to model configuration
+        parsed_model_config: Optional path to model configuration
         inference_method: Inference method to use ('hmc' or 'advi')
     """
-    model_config = FullConfig()
-    if model_config_file is not None:
-        content = open(model_config_file).read()
+    parsed_model_config = FullConfig()
+    if model_config is not None:
+        content = open(model_config).read()
         logger.info(content)
-        if model_config_file.endswith('.json'):
+        if model_config.endswith('.json'):
             data = json.loads(content)  # type: ignore
-        elif model_config_file.endswith('.yaml'):
+        elif model_config.endswith('.yaml'):
             data = yaml.load(content, Loader=yaml.FullLoader)
         if 'user_options' not in data:
             data['user_options']  = {}
-        model_config = ChapConfig.model_validate(data).user_options
+        parsed_model_config = ChapConfig.model_validate(data).user_options
     training_df = pd.read_csv(historic_data)
     future_df = pd.read_csv(future_data)
 
@@ -87,13 +87,13 @@ def predict(model: str,
     frequency = detect_frequency(training_df)
     logger.info(f"Detected data frequency: {frequency}")
 
-    inference_params = InferenceParams(**model_config.model_dump())
-    fourier_hyperparameters = FourierHyperparameters(**model_config.model_dump())
+    inference_params = InferenceParams(**parsed_model_config.model_dump())
+    fourier_hyperparameters = FourierHyperparameters(**parsed_model_config.model_dump())
 
     # Create input params with detected frequency
     #seasonal_params = SeasonalXArray.Params(frequency=frequency)
     input_params = FourierInputCreator.Params(
-        **model_config.model_dump(),
+        **parsed_model_config.model_dump(),
         #seasonal_params=seasonal_params
     )
     input_params.seasonal_params.frequency = frequency
@@ -106,7 +106,7 @@ def predict(model: str,
     # model = SeasonalFourierRegression(
     #     prediction_length=3,
     #     lag=3,
-    #     fourier_hyperparameters=FourierHyperparameters(**model_config.model_dump()),
+    #     fourier_hyperparameters=FourierHyperparameters(**parsed_model_config.model_dump()),
     #     inference_params=inference_params
     # )
     predictions = regression_model.predict(training_df, future_df)
