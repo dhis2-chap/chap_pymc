@@ -103,6 +103,6 @@ entry_points:
       historic_data: str
       future_data: str
       out_file: str
-      model_config_file: str
+      model_config: str
 
 python_env: pyenv.yaml
