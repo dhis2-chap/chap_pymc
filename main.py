@@ -57,6 +57,8 @@ def predict(model: str,
             future_data: str,
             out_file: str,
             model_config: str | None = None,
+            save_plot: bool = False,
+            save_data: bool = False,
             ):
     """
     Generate predictions using either seasonal or Fourier regression model.
@@ -68,6 +70,8 @@ def predict(model: str,
         out_file: Path to save predictions CSV
         parsed_model_config: Optional path to model configuration
         inference_method: Inference method to use ('hmc' or 'advi')
+        save_plot: Whether to save diagnostic plots (default: False)
+        save_data: Whether to save intermediate data files (default: False)
     """
     parsed_model_config = FullConfig()
     if model_config is not None:
@@ -100,7 +104,7 @@ def predict(model: str,
     params=SeasonalFourierRegressionV2.Params(inference_params=inference_params,
                                               fourier_hyperparameters=fourier_hyperparameters,
                                               input_params=input_params)
-    name = Path(historic_data).stem
+    name = Path(historic_data).stem if save_data else None
     regression_model = SeasonalFourierRegressionV2(params, name=name)
     # Note: save_plot will be skipped if name contains invalid path characters
     # model = SeasonalFourierRegression(
@@ -109,7 +113,7 @@ def predict(model: str,
     #     fourier_hyperparameters=FourierHyperparameters(**parsed_model_config.model_dump()),
     #     inference_params=inference_params
     # )
-    predictions = regression_model.predict(training_df, future_df)
+    predictions = regression_model.predict(training_df, future_df, save_plot=save_plot)
     predictions.to_csv(out_file, index=False)
     print(f"Predictions saved to {out_file}")
 
