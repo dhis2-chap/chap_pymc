@@ -7,27 +7,53 @@ import xarray
 from matplotlib import pyplot as plt
 import pymc as pm
 import pymc.dims as pmd
+from scipy.stats import poisson
+
 
 class KmerModel:
-    def __init__(self, df: pd.DataFrame):
-        array: xarray.DataArray = (df.set_index(['label_positive', 'kmer'])["count"].sort_index()).to_xarray()
-        print(array)
-        plt.hist(array.sel(label_positive=True), bins=100, color='r', density=True, alpha=0.5)
-        plt.hist(array.sel(label_positive=False), bins=100, color='b', density=True, alpha=0.5)
-        plt.legend()
-        #plt.show()
-        self.counts = array
+    def __init__(self, idata=None, n_counts: int = None):
+        self.posterior = idata
+        self.n_counts = n_counts
 
-    def fit(self):
-        coords = {key: val.values for key, val in self.counts.coords.items()}
+    def fit(self, df):
+        array: xarray.DataArray = (df.set_index(['label_positive', 'kmer'])["count"].sort_index()).to_xarray()
+        array = array.fillna(0)
+        self.n_counts = int(array.sum())
+        counts = array
+        coords = {key: val.values for key, val in counts.coords.items()}
         with pm.Model(coords=coords) as model:
-            self.get_model(self.counts)
+            self.get_model(counts)
             idata = pm.sample(tune=400, draws=400, chains=4)
-        median_diff = idata.posterior['log_diff'].median(dim=('chain', 'draw'))
-        print(median_diff)
-        print(np.sort(median_diff.values)[-20:])
-        #median_diff.plot.hist(bins=100)
-        plt.show()
+        self.posterior = idata.posterior
+
+    def save(self, filename: Path):
+        self.posterior.to_netcdf(filename)
+        with open(filename.with_suffix('.txt'), "w") as f:
+            f.write(str(int(self.n_counts)))
+
+    @classmethod
+    def load(cls, filename: Path):
+        idata = xarray.open_dataset(filename)
+        counts = int(open(filename.with_suffix('.txt')).read())
+        return cls(idata, counts)
+
+
+    def predict(self, r_df: pd.DataFrame):
+        r_array = r_df.set_index(['kmer', 'repertoire_id'])["count"].sort_index().to_xarray()
+        r_array = r_array.fillna(0)
+        labels = {}
+        for r_id in r_array.coords['repertoire_id'].values:
+
+            array = r_array.sel(repertoire_id=r_id).values.astype(int)
+            ratio = float(array.sum()/self.n_counts)
+            pos_rates = self.posterior['pos_rates'].values * ratio
+            p_pos = poisson.logpmf(array, pos_rates)
+            neg_rates = self.posterior['neg_rates'].values*ratio
+            p_neg = poisson.logpmf(array, neg_rates)
+            diff = p_pos.sum() - p_neg.sum()
+            labels[r_id] = bool(p_pos.sum()>p_neg.sum())
+        return labels
+
 
     def get_model(self, counts):
         h_log_rate = pm.Normal('h_log_rate', 0, 5)
@@ -49,8 +75,25 @@ class KmerModel:
 def df()->pd.DataFrame:
     return pd.read_csv("/Users/knutdr/Sources/predict-airr/tests/test_output/kmers.csv")
 
-def test_kmers(df):
-    model = KmerModel(df)
-    model.fit()
-    print(df.head())
+@pytest.fixture
+def r_df()->pd.DataFrame:
+    return pd.read_csv("/Users/knutdr/Sources/predict-airr/tests/test_output/reportoire_counts.csv")
+
+@pytest.fixture
+def metadata()->pd.DataFrame:
+    return pd.read_csv("/Users/knutdr/Sources/predict-airr/test_data/train_datasets/train_dataset_1/metadata.csv")
+
+def test_kmers(df, r_df):
+    model = KmerModel()
+    model.fit(df)
+    model.save(Path('tmp.nc'))
+    labels = model.predict(r_df)
+    print(labels)
+
+def test_predict(r_df, metadata):
+    model = KmerModel.load(Path('tmp.nc'))
+    labels = model.predict(r_df)
+    for _, row in metadata.iterrows():
+        print(row['label_positive'], labels[row['repertoire_id']])
+
 
