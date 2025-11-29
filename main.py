@@ -57,6 +57,7 @@ def predict(model: str,
             future_data: str,
             out_file: str,
             model_config: str | None = None,
+            report_filename: str | None = None,
             save_plot: bool = False,
             save_data: bool = False,
             ):
@@ -116,6 +117,8 @@ def predict(model: str,
     predictions = regression_model.predict(training_df, future_df, save_plot=save_plot)
     predictions.to_csv(out_file, index=False)
     print(f"Predictions saved to {out_file}")
+    if report_filename is not None:
+        regression_model.save_report(report_filename)
 
 
 if __name__ == "__main__":

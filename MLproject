@@ -84,7 +84,7 @@ user_options:
     title: Number of Lag Features
     type: integer
   skip_bottom_n_seasons:
-    default: 0
+      default: 0
     title: Number of Lowest Seasons to Skip
     type: integer
 
@@ -97,7 +97,7 @@ entry_points:
       model_config: str
   predict:
     command: python main.py predict {model} {historic_data} {future_data} {out_file}
-      {model_config}
+      {model_config} {report_filename}
     parameters:
       model: str
       historic_data: str
