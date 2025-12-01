@@ -26,13 +26,12 @@ class KmerModel:
         counts = self.create_training_array(df)
         self.fit_counts(counts)
 
-    def fit_counts(self, counts):
-        counts.sel(label_positive=False).plot.hist()
-        plt.show()
-        coords = {key: val.values for key, val in counts.coords.items()}
+    def fit_counts(self, ds):
+        coords = {key: val.values for key, val in ds.coords.items()}
+        counts = ds['count']
         self.n_counts = int(counts.sum())
         with pm.Model(coords=coords) as model:
-            self.get_model(counts)
+            self.get_model(ds)
             idata = pm.sample(**self.params.model_dump())
             az.plot_posterior(idata, var_names=['h_log_rate', 'sigma'])
             plt.show()
@@ -44,12 +43,14 @@ class KmerModel:
         counts = array
         return counts
 
-    def create_subset_training_array(self, df, metadata, n_repertoirs=None) -> xarray.DataArray:
-        counts: xarray.DataArray = (df.set_index(['kmer', 'repertoire_id'])[["count"]].sort_index()).to_xarray()
+    def create_subset_training_array(self, df, metadata, n_repertoirs=None) -> xarray.Dataset:
+        counts: xarray.DataArray = (df.set_index(['kmer', 'repertoire_id'])["count"].sort_index()).to_xarray()
+        y = metadata.set_index(['repertoire_id'])['label_positive'].sort_index().to_xarray()
         counts = counts.fillna(0)
+        ds = xarray.Dataset({'count': counts, 'label_positive': y})
         if n_repertoirs is not None:
-            counts = counts.isel(repertoire_id=slice(0, n_repertoirs))
-        return ds.sum(dim='repertoire_id')
+            ds = ds.isel(repertoire_id=slice(0, n_repertoirs))
+        return ds
 
 
     def save(self, filename: Path):
@@ -69,18 +70,26 @@ class KmerModel:
         r_array = r_array.fillna(0)
         labels = {}
         scores = []
-        pos_rates = self.posterior['pos_rates'].values
-        neg_rates = self.posterior['neg_rates'].values
+
+        assert not self.posterior['log_rates'].isnull().any()
+        assert not self.posterior['log_diff'].isnull().any()
+        neg_rates = self.posterior['log_rates'].values + self.posterior['log_diff_neg'].values
+        pos_rates = self.posterior['log_rates'].values+self.posterior['log_diff'].values
+
         plt.scatter(neg_rates, pos_rates)
         plt.title('Negative rates vs. Positive rates')
         plt.show()
         for r_id in r_array.coords['repertoire_id'].values:
 
             array = r_array.sel(repertoire_id=r_id).values.astype(int)
-            ratio = float(array.sum() / self.n_counts)
-            p_pos = poisson.logpmf(array, pos_rates*ratio)
-
-            p_neg = poisson.logpmf(array, neg_rates*ratio)
+            #ratio = float(array.sum() / self.n_counts)
+            ratio = 1
+            p_pos = poisson.logpmf(array, np.exp(pos_rates)*ratio)
+            if np.any(np.isnan(p_pos)):
+                assert False, p_pos
+            p_neg = poisson.logpmf(array, np.exp(neg_rates)*ratio)
+            if np.any(np.isnan(p_neg)):
+                assert False, p_neg
             diff = p_pos.sum() - p_neg.sum()
             scores.append(diff)
             labels[r_id] = float(diff)
@@ -90,20 +99,23 @@ class KmerModel:
         plt.show()
         return labels
 
-    def get_model(self, counts: xarray.DataArray):
-        mu = float(np.log(counts.sum()/2/len(counts.coords['kmer'].values)))
-        print('exp', mu)
-        h_log_rate = pm.Normal('h_log_rate') * 5 + mu
+    def get_model(self, ds: xarray.Dataset):
+        counts = ds['count']
+        y = ds['label_positive']
+        #mu = float(np.log(counts.sum()/2/len(counts.coords['kmer'].values)))
+        #print('exp', mu)
+        h_log_rate = pm.Normal('h_log_rate') * 5
         sigma = pm.HalfNormal('sigma', 5)
         log_rates = pmd.Normal(
             'log_rates',
             0,
             1, dims=('kmer', )) * sigma + h_log_rate
-        log_diff = pmd.Normal('log_diff', 0, 1, dims=('kmer', ))
-        neg_rates = pm.Deterministic('neg_rates', np.exp(log_rates.values), dims=('kmer', ))
-        pos_rates = pm.Deterministic('pos_rates', np.exp((log_diff + log_rates).values), dims=('kmer', ))
-        pm.Poisson('obs_neg', neg_rates, observed=counts.sel(label_positive=False).values, dims=('kmer', ))
-        pm.Poisson('obs_pos', pos_rates, observed=counts.sel(label_positive=True).values, dims=('kmer', ))
+        log_diff = pmd.Normal('log_diff', 0, 1, dims=('kmer',))*0.01
+        log_diff_neg= pmd.Normal('log_diff_neg', 0, 1, dims=('kmer',))*0.01
+        rates = pm.Deterministic('rates', np.exp((log_rates+log_diff*y+log_diff_neg*(1-y)).values), dims=('kmer', 'repertoire_id'))
+        pm.Poisson('obs', rates, observed=counts.values, dims=('kmer', 'repertoire_id'))
+        #pm.Poisson('obs_neg', neg_rates, observed=counts.sel(label_positive=False).values, dims=('kmer',))
+        #pm.Poisson('obs_pos', pos_rates, observed=counts.sel(label_positive=True).values, dims=('kmer', ))
 
 
 
@@ -133,9 +145,11 @@ def real_r_df():
     return pd.read_csv("/Users/knutdr/Sources/predict-airr/tests/test_output/real_reportoire_counts.csv")
 
 def test_kmers(df, r_df, metadata, name='tmp', n_repertoires=None):
-    model = KmerModel()#params=HMCParams(tune=20, draws=20))
+    dbg_params = HMCParams(tune=20, draws=20)
+    large_params = HMCParams(tune=3000, draws=3000)
+    model = KmerModel(params=large_params) #)
     #counts = model.create_training_array(df)
-    counts = model.create_subset_training_array(r_df, n_repertoires)
+    counts = model.create_subset_training_array(r_df, metadata, n_repertoires)
     model.fit_counts(counts)
     model.save(Path(f'{name}.nc'))
     labels = model.predict(r_df)
@@ -145,7 +159,7 @@ def test_kmers(df, r_df, metadata, name='tmp', n_repertoires=None):
     print(labels)
 
 def test_real(real_df, real_r_df, real_metadata):
-    test_kmers(real_df, real_r_df, real_metadata, name='real', n_repertoires=5)
+    test_kmers(real_df, real_r_df, real_metadata, name='real', n_repertoires=100)
 
 def test_predict_real(real_r_df, real_metadata):
     test_predict(real_r_df, real_metadata)
